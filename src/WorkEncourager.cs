@@ -21,6 +21,8 @@ public class Settings
     public bool RemindersEnabled = false;
     public int ReminderMode = 0;
     public int WaterIntervalMinutes = 30, RestroomIntervalMinutes = 30;
+    public bool DailySummaryEnabled = true;
+    public string LastSummaryDate = "";
     public string ManualMonth = DateTime.Today.ToString("yyyy-MM");
     public DateTime DoubleSaturday = new DateTime(2026, 10, 31);
 
@@ -50,7 +52,7 @@ public sealed class Snapshot
     public bool WorkingDay;
     public double Total, Elapsed, Progress, Remaining;
     public int MonthDays;
-    public decimal Daily, Earned;
+    public decimal Daily, Earned, PerSecond;
     public string Status;
 }
 
@@ -98,9 +100,16 @@ public static class WorkClock
         result.Remaining = total - result.Elapsed;
         result.MonthDays = s.ManualDays && s.ManualMonth == now.ToString("yyyy-MM") ? s.Days : CountDays(s, now);
         result.Daily = s.MonthlySalary / result.MonthDays;
+        result.PerSecond = result.Daily / (decimal)total;
         result.Earned = result.Daily * (decimal)result.Progress;
         result.Status = !result.WorkingDay ? "今日休息" : now < start ? "尚未开工" : now >= end ? "今日已下班" : s.HasBreak && now >= pause && now < resume ? "午休充电中" : "正在积累小确幸";
         return result;
+    }
+    public static bool SummaryDue(Settings settings, DateTime now)
+    {
+        // 只补发当天的总结，日期随配置保存，重启和重新打开设置都不会重复弹出。
+        return settings.DailySummaryEnabled && settings.MonthlySalary > 0 && IsWorkingDay(settings, now) &&
+            now.TimeOfDay >= TimeSpan.Parse(settings.End) && settings.LastSummaryDate != now.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture);
     }
 }
 
@@ -165,7 +174,7 @@ public sealed class SettingsForm : Form
     private NumericUpDown salary, dayCount, waterInterval, restroomInterval;
     private ComboBox mode, rest, reminderMode, widgetSize;
     private DateTimePicker start, end, pause, resume, anchor;
-    private CheckBox lunch, manual, onTop, reminders;
+    private CheckBox lunch, manual, onTop, reminders, dailySummary;
     private Label calculated;
     private readonly Color ink = Color.FromArgb(32, 47, 44);
 
@@ -176,7 +185,7 @@ public sealed class SettingsForm : Form
         Font = new Font("Microsoft YaHei UI", 10);
         BackColor = Color.FromArgb(245, 248, 245);
         ForeColor = ink;
-        ClientSize = new Size(470, 818);
+        ClientSize = new Size(470, 854);
         FormBorderStyle = FormBorderStyle.FixedDialog;
         MaximizeBox = false; MinimizeBox = false; StartPosition = FormStartPosition.CenterScreen;
         AutoScaleMode = AutoScaleMode.Dpi;
@@ -218,13 +227,14 @@ public sealed class SettingsForm : Form
         waterInterval = new NumericUpDown { Name = "WaterInterval", Location = new Point(155, 574), Width = 62, Minimum = 1, Maximum = 1440, Value = settings.WaterIntervalMinutes }; Controls.Add(waterInterval);
         LabelAt("如厕间隔 / 分", 236, 576, 127);
         restroomInterval = new NumericUpDown { Name = "RestroomInterval", Location = new Point(379, 574), Width = 62, Minimum = 1, Maximum = 1440, Value = settings.RestroomIntervalMinutes }; Controls.Add(restroomInterval);
-        Label reminderNote = LabelAt("按各自间隔累计上班时间，午休暂停。\n同时到期合并弹窗；保存设置或重启后重新计时。", 24, 619, 422);
+        dailySummary = new CheckBox { Name = "DailySummary", Text = "下班时弹窗汇总今日收入", Location = new Point(24, 617), Size = new Size(410, 29), Checked = settings.DailySummaryEnabled }; Controls.Add(dailySummary);
+        Label reminderNote = LabelAt("间隔按上班时间累计，午休暂停，同时到期合并。\n下班总结当天补发一次；保存或重启重计休息间隔。", 24, 655, 422);
         reminderNote.Size = new Size(422, 50); reminderNote.Font = new Font(Font.FontFamily, 9);
-        Label note = LabelAt("自动天数不含节假日和调休；手动覆盖仅当月有效。\n手动天数影响日薪；每日是否上班仍按休息制判断。", 24, 682, 422);
+        Label note = LabelAt("自动天数不含节假日和调休；手动覆盖仅当月有效。\n手动天数影响日薪；每日是否上班仍按休息制判断。", 24, 718, 422);
         note.Size = new Size(422, 52); note.Font = new Font(Font.FontFamily, 9); note.ForeColor = calculated.ForeColor;
-        Button save = new Button { Text = "保存设置", Location = new Point(252, 751), Size = new Size(189, 43), BackColor = Color.FromArgb(31, 94, 74), ForeColor = Color.White, FlatStyle = FlatStyle.Flat };
+        Button save = new Button { Text = "保存设置", Location = new Point(252, 787), Size = new Size(189, 43), BackColor = Color.FromArgb(31, 94, 74), ForeColor = Color.White, FlatStyle = FlatStyle.Flat };
         save.FlatAppearance.BorderSize = 0; Controls.Add(save);
-        Button cancel = new Button { Text = "取消", Location = new Point(142, 751), Size = new Size(94, 43), DialogResult = DialogResult.Cancel }; Controls.Add(cancel);
+        Button cancel = new Button { Text = "取消", Location = new Point(142, 787), Size = new Size(94, 43), DialogResult = DialogResult.Cancel }; Controls.Add(cancel);
         AcceptButton = save; CancelButton = cancel;
         if (settings.Theme == 0)
         {
@@ -290,6 +300,7 @@ public sealed class SettingsForm : Form
             next.HasBreak = lunch.Checked; next.BreakStart = pause.Value.ToString("HH:mm"); next.BreakEnd = resume.Value.ToString("HH:mm"); next.AlwaysOnTop = onTop.Checked;
             next.RemindersEnabled = reminders.Checked; next.ReminderMode = reminderMode.SelectedIndex;
             next.WaterIntervalMinutes = (int)waterInterval.Value; next.RestroomIntervalMinutes = (int)restroomInterval.Value;
+            next.DailySummaryEnabled = dailySummary.Checked;
             next.WidgetSize = widgetSize.SelectedIndex;
             try { Storage.Save(next); Result = next; DialogResult = DialogResult.OK; Close(); }
             catch (Exception ex) { MessageBox.Show(this, ex.Message, "设置未保存", MessageBoxButtons.OK, MessageBoxIcon.Warning); }
@@ -311,10 +322,12 @@ public sealed class ReminderPopup : Form
 {
     private readonly System.Windows.Forms.Timer dismiss = new System.Windows.Forms.Timer();
     private readonly Color accent;
-    public ReminderPopup(string message, int theme)
+    private readonly bool summary;
+    public ReminderPopup(string message, int theme, bool dailySummary = false)
     {
+        summary = dailySummary;
         bool pink = theme == 1;
-        Text = "休息提醒 · 上班鼓励器"; ClientSize = new Size(350, 177);
+        Text = summary ? "下班总结 · 上班鼓励器" : "休息提醒 · 上班鼓励器"; ClientSize = new Size(350, 177);
         AutoScaleMode = AutoScaleMode.None; FormBorderStyle = FormBorderStyle.None;
         StartPosition = FormStartPosition.Manual; ShowInTaskbar = false; TopMost = true;
         BackColor = pink ? Color.FromArgb(253, 239, 250) : Color.FromArgb(20, 30, 53);
@@ -324,7 +337,7 @@ public sealed class ReminderPopup : Form
         Rectangle area = Screen.FromPoint(Cursor.Position).WorkingArea;
         Location = new Point(area.Right - Width - 20, area.Bottom - Height - 20);
         using (GraphicsPath path = Widget.Rounded(ClientRectangle, 18)) Region = new Region(path);
-        Controls.Add(new Label { Text = "该给自己一点休息时间了", Font = new Font(Font.FontFamily, 11, FontStyle.Bold), Bounds = new Rectangle(72, 24, 260, 27), ForeColor = ForeColor });
+        Controls.Add(new Label { Text = summary ? "下班啦，今天辛苦了！" : "该给自己一点休息时间了", Font = new Font(Font.FontFamily, 11, FontStyle.Bold), Bounds = new Rectangle(72, 24, 260, 27), ForeColor = ForeColor });
         Controls.Add(new Label { Text = message, Bounds = new Rectangle(72, 61, 258, 47), ForeColor = ForeColor });
         Button close = new Button { Text = "知道了", Bounds = new Rectangle(232, 126, 96, 31), FlatStyle = FlatStyle.Flat, BackColor = BackColor, ForeColor = accent, Cursor = Cursors.Hand };
         close.FlatAppearance.BorderColor = accent; close.Click += delegate { Close(); }; Controls.Add(close);
@@ -344,8 +357,16 @@ public sealed class ReminderPopup : Form
         using (Pen pen = new Pen(accent, 2))
         {
             using (GraphicsPath path = Widget.Rounded(new Rectangle(0, 0, Width - 1, Height - 1), 18)) g.DrawPath(pen, path);
-            g.DrawLine(pen, 26, 38, 30, 68); g.DrawLine(pen, 30, 68, 49, 68); g.DrawLine(pen, 49, 68, 53, 38); g.DrawLine(pen, 26, 38, 53, 38);
-            g.DrawArc(pen, 46, 43, 15, 17, -90, 180); g.DrawLine(pen, 31, 51, 48, 51);
+            if (summary)
+            {
+                g.DrawEllipse(pen, 25, 36, 33, 33);
+                TextRenderer.DrawText(g, "¥", Font, new Rectangle(25, 36, 33, 33), accent, TextFormatFlags.HorizontalCenter | TextFormatFlags.VerticalCenter);
+            }
+            else
+            {
+                g.DrawLine(pen, 26, 38, 30, 68); g.DrawLine(pen, 30, 68, 49, 68); g.DrawLine(pen, 49, 68, 53, 38); g.DrawLine(pen, 26, 38, 53, 38);
+                g.DrawArc(pen, 46, 43, 15, 17, -90, 180); g.DrawLine(pen, 31, 51, 48, 51);
+            }
         }
     }
     protected override void Dispose(bool disposing)
@@ -409,9 +430,20 @@ public sealed class Widget : Form
         reminderTimer.Interval = 1000;
         reminderTimer.Tick += delegate
         {
-            string message = reminderClock.Poll(settings, DateTime.Now);
+            DateTime now = DateTime.Now;
+            bool summary = WorkClock.SummaryDue(settings, now);
+            string message;
+            if (summary)
+            {
+                message = "你今日赚了 ¥" + WorkClock.At(settings, now).Earned.ToString("N2") + "（估算）。";
+                settings.LastSummaryDate = now.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture);
+                try { Storage.Save(settings); }
+                catch (Exception ex) { MessageBox.Show(this, "下班总结状态未能保存，重启后可能再次提示。\n" + ex.Message, "设置未保存"); }
+                if (reminderPopup != null) reminderPopup.Close();
+            }
+            else message = reminderClock.Poll(settings, now);
             if (message == null || (reminderPopup != null && !reminderPopup.IsDisposed)) return;
-            ReminderPopup popup = new ReminderPopup(message, settings.Theme); reminderPopup = popup;
+            ReminderPopup popup = new ReminderPopup(message, settings.Theme, summary); reminderPopup = popup;
             popup.FormClosed += delegate { popup.Dispose(); if (reminderPopup == popup) reminderPopup = null; };
             popup.Show();
         };
@@ -543,7 +575,7 @@ public sealed class Widget : Form
         using (LinearGradientBrush gold = new LinearGradientBrush(new Rectangle(coinX, (int)coinY, coinSize, coinSize), pink ? Color.FromArgb(255, 222, 158) : accent, secondary, 50f)) g.FillEllipse(gold, coinX, coinY, coinSize, coinSize);
         using (Pen coin = new Pen(Color.FromArgb(160, Color.White))) g.DrawEllipse(coin, coinX + 3, coinY + 3, coinSize - 6, coinSize - 6);
         Write(g, "¥", mini ? 12 : 14, pink ? Color.FromArgb(133, 77, 110) : Color.FromArgb(15, 37, 66), new RectangleF(coinX, coinY, coinSize, coinSize), FontStyle.Bold, StringAlignment.Center);
-        Write(g, settings.MonthlySalary == 0 ? "填入月薪，点亮收入进度" : "今日目标 ¥ " + value.Daily.ToString("N2"), mini ? 7.5f : 8, accent, new RectangleF(pad + 12, mini ? 118 : 141, Width - 40, 19), FontStyle.Regular, StringAlignment.Near);
+        Write(g, settings.MonthlySalary == 0 ? "设置薪资后显示每秒收入" : "每秒收入 ¥ " + value.PerSecond.ToString(value.PerSecond >= 0.0001m ? "0.0000" : "0.0000########"), mini ? 7.5f : 8, accent, new RectangleF(pad + 12, mini ? 118 : 141, Width - 40, 19), FontStyle.Regular, StringAlignment.Near);
         int rx = mini ? 20 : 24, ry = mini ? 154 : 187, diameter = mini ? 66 : 82;
         Rectangle ring = new Rectangle(rx, ry, diameter, diameter);
         using (Pen track = new Pen(Color.FromArgb(30, secondary), mini ? 6 : 7)) g.DrawEllipse(track, ring);
@@ -585,7 +617,7 @@ public static class Program
         {
             for (int theme = 0; theme < 2; theme++)
             for (int size = 0; size < 2; size++)
-                using (Widget preview = new Widget(new Settings { MonthlySalary = 8800, Theme = theme, WidgetSize = size }))
+                using (Widget preview = new Widget(new Settings { MonthlySalary = 8800, Theme = theme, WidgetSize = size, DailySummaryEnabled = false }))
                 using (Bitmap bitmap = new Bitmap(preview.Width, preview.Height))
                 {
                     preview.Opacity = 0; preview.Show(); Application.DoEvents(); preview.DrawToBitmap(bitmap, preview.ClientRectangle); preview.Hide();
@@ -597,6 +629,13 @@ public static class Program
                 {
                     preview.Opacity = 0; preview.Show(); Application.DoEvents(); preview.DrawToBitmap(bitmap, preview.ClientRectangle); preview.Hide();
                     bitmap.Save(Path.Combine(AppDomain.CurrentDomain.BaseDirectory, theme == 0 ? "reminder-neon.png" : "reminder-starlight.png"));
+                }
+            for (int theme = 0; theme < 2; theme++)
+                using (ReminderPopup preview = new ReminderPopup("你今日赚了 ¥400.00（估算）。", theme, true))
+                using (Bitmap bitmap = new Bitmap(preview.Width, preview.Height))
+                {
+                    preview.Opacity = 0; preview.Show(); Application.DoEvents(); preview.DrawToBitmap(bitmap, preview.ClientRectangle); preview.Hide();
+                    bitmap.Save(Path.Combine(AppDomain.CurrentDomain.BaseDirectory, theme == 0 ? "summary-neon.png" : "summary-starlight.png"));
                 }
             using (SettingsForm preview = new SettingsForm(new Settings { MonthlySalary = 8800 }))
             {
@@ -638,7 +677,7 @@ public static class Tests
         };
         try
         {
-            Settings s = new Settings { MonthlySalary = 8800, ManualDays = true, Days = 22, ManualMonth = "2026-11" };
+            Settings s = new Settings { MonthlySalary = 8800, ManualDays = true, Days = 22, ManualMonth = "2026-11", DailySummaryEnabled = false };
             s.Validate();
             Snapshot v = WorkClock.At(s, new DateTime(2026, 11, 2, 8, 0, 0));
             check(v.Progress == 0 && v.Earned == 0, "Before work stays at zero");
@@ -651,10 +690,12 @@ public static class Tests
             check(v.Elapsed == noon.Elapsed, "Lunch end boundary");
             v = WorkClock.At(s, new DateTime(2026, 11, 2, 14, 0, 0));
             check(v.Progress == 0.5 && v.Earned == 200, "Half day produces half daily salary");
+            check(v.PerSecond == 400m / 28800m, "Per-second amount uses daily salary and effective working seconds");
             v = WorkClock.At(s, new DateTime(2026, 11, 2, 18, 0, 0));
             check(v.Progress == 1 && v.Earned == 400 && v.Remaining == 0, "End boundary caps income");
             v = WorkClock.At(s, new DateTime(2026, 11, 2, 23, 59, 59));
             check(v.Progress == 1 && v.Earned == 400, "After hours stays capped");
+            check(v.PerSecond == 400m / 28800m, "Display rate does not change after clock-out");
             v = WorkClock.At(s, new DateTime(2026, 11, 3, 0, 0, 0));
             check(v.Progress == 0 && v.Earned == 0, "Midnight resets today's income");
             v = WorkClock.At(s, new DateTime(2026, 11, 1, 14, 0, 0));
@@ -816,6 +857,36 @@ public static class Tests
             Storage.Save(remind);
             check(Storage.Load().RemindersEnabled && Storage.Load().ReminderMode == 2, "Reminder options persist");
             check(Storage.Load().WaterIntervalMinutes == 1 && Storage.Load().RestroomIntervalMinutes == 40, "Distinct custom intervals survive storage reload");
+            Settings summary = new Settings { MonthlySalary = 8800, ManualDays = true, Days = 22, ManualMonth = "2026-11" };
+            DateTime offWork = new DateTime(2026, 11, 2, 18, 0, 0);
+            check(!WorkClock.SummaryDue(summary, offWork.AddSeconds(-1)), "No daily summary before clock-out");
+            check(WorkClock.SummaryDue(summary, offWork), "Daily summary is due at clock-out");
+            check(WorkClock.SummaryDue(summary, offWork.AddHours(3)), "Reopening later that day catches up once");
+            check(WorkClock.At(summary, offWork).Earned == 400, "Summary uses completed day's estimated earnings");
+            check(!summary.RemindersEnabled && WorkClock.SummaryDue(summary, offWork), "Daily summary works independently of rest reminder switch");
+            summary.LastSummaryDate = "2026-11-02";
+            check(!WorkClock.SummaryDue(summary, offWork.AddHours(4)), "Same-day summary never repeats");
+            Storage.Save(summary);
+            check(!WorkClock.SummaryDue(Storage.Load(), offWork.AddHours(2)), "Summary deduplication survives restart");
+            check(WorkClock.SummaryDue(summary, offWork.AddDays(1)), "Next workday receives its own summary");
+            check(!WorkClock.SummaryDue(summary, new DateTime(2026, 11, 8, 19, 0, 0)), "Rest days never receive earnings summary");
+            summary.DailySummaryEnabled = false;
+            check(!WorkClock.SummaryDue(summary, offWork.AddDays(1)), "Daily summary can be disabled");
+            summary.DailySummaryEnabled = true; summary.MonthlySalary = 0;
+            check(!WorkClock.SummaryDue(summary, offWork.AddDays(1)), "Unconfigured salary does not produce summary popup");
+            using (StringReader legacy = new StringReader("<Settings><MonthlySalary>8800</MonthlySalary></Settings>"))
+            {
+                Settings old = (Settings)new XmlSerializer(typeof(Settings)).Deserialize(legacy);
+                check(old.DailySummaryEnabled && old.LastSummaryDate == "", "Legacy settings support new daily summary without losing salary");
+            }
+            summary.MonthlySalary = 8800; summary.LastSummaryDate = "";
+            using (SettingsForm dialog = new SettingsForm(summary))
+            {
+                dialog.Opacity = 0; dialog.Show(); Application.DoEvents();
+                summary.LastSummaryDate = "2026-11-02";
+                ((Button)dialog.AcceptButton).PerformClick();
+                check(Storage.Load().LastSummaryDate == "2026-11-02", "Saving an open settings dialog retains summary state updated meanwhile");
+            }
             using (StringReader legacy = new StringReader("<Settings><MonthlySalary>8800</MonthlySalary></Settings>"))
                 check(!((Settings)new XmlSerializer(typeof(Settings)).Deserialize(legacy)).RemindersEnabled, "Legacy settings keep reminders opt-in");
             using (ReminderPopup popup = new ReminderPopup("喝水时间到了，给自己补充一点水分。", 0))
