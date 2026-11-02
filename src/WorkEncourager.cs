@@ -20,6 +20,7 @@ public class Settings
     public int WidgetSize = 0;
     public bool RemindersEnabled = false;
     public int ReminderMode = 0;
+    public int WaterIntervalMinutes = 30, RestroomIntervalMinutes = 30;
     public string ManualMonth = DateTime.Today.ToString("yyyy-MM");
     public DateTime DoubleSaturday = new DateTime(2026, 10, 31);
 
@@ -36,6 +37,8 @@ public class Settings
         if (MonthlySalary < 0 || MonthlySalary > 100000000 || Days < 1 || Days > 31 || WorkMode < 0 || WorkMode > 2 || SingleRest < 0 || SingleRest > 6 || Theme < 0 || Theme > 1)
             throw new Exception("月薪、工作天数或休息制设置无效。");
         if (ReminderMode < 0 || ReminderMode > 2) throw new Exception("休息提醒方式无效。");
+        if (WaterIntervalMinutes < 1 || WaterIntervalMinutes > 1440 || RestroomIntervalMinutes < 1 || RestroomIntervalMinutes > 1440)
+            throw new Exception("喝水和如厕间隔需在1至1440分钟之间。");
         if (WidgetSize < 0 || WidgetSize > 1) throw new Exception("挂件大小设置无效。");
         if (DoubleSaturday.DayOfWeek != DayOfWeek.Saturday)
             throw new Exception("大小周的参考日期请选择一个双休周的周六。");
@@ -104,10 +107,9 @@ public static class WorkClock
 public sealed class ReminderClock
 {
     private DateTime last;
-    private double seconds;
-    private bool waterNext = true;
+    private double waterSeconds, restroomSeconds;
     public ReminderClock(DateTime now) { Reset(now); }
-    public void Reset(DateTime now) { last = now; seconds = 0; waterNext = true; }
+    public void Reset(DateTime now) { last = now; waterSeconds = restroomSeconds = 0; }
     public string Poll(Settings settings, DateTime now)
     {
         if (!settings.RemindersEnabled || now.Date != last.Date || now < last)
@@ -116,14 +118,17 @@ public sealed class ReminderClock
         double delta = Math.Max(0, current.Elapsed - WorkClock.At(settings, last).Elapsed);
         last = now;
         if (!current.WorkingDay || now.TimeOfDay < TimeSpan.Parse(settings.Start) || now.TimeOfDay >= TimeSpan.Parse(settings.End))
-        { seconds = 0; return null; }
-        seconds += delta;
+        { waterSeconds = restroomSeconds = 0; return null; }
+        if (settings.ReminderMode != 2) waterSeconds += delta;
+        if (settings.ReminderMode != 1) restroomSeconds += delta;
         if (settings.HasBreak && now.TimeOfDay >= TimeSpan.Parse(settings.BreakStart) && now.TimeOfDay < TimeSpan.Parse(settings.BreakEnd)) return null;
-        if (seconds < 1800) return null;
-        // 休眠恢复或长时间未调度时最多提醒一次，不补弹此前错过的提醒。
-        seconds = 0;
-        bool water = settings.ReminderMode == 1 || (settings.ReminderMode == 0 && waterNext);
-        if (settings.ReminderMode == 0) waterNext = !waterNext;
+        bool water = settings.ReminderMode != 2 && waterSeconds >= settings.WaterIntervalMinutes * 60;
+        bool restroom = settings.ReminderMode != 1 && restroomSeconds >= settings.RestroomIntervalMinutes * 60;
+        if (!water && !restroom) return null;
+        // 两个间隔互不重置；同时到期合并提示，休眠恢复时也不连续补弹。
+        if (water) waterSeconds = 0;
+        if (restroom) restroomSeconds = 0;
+        if (water && restroom) return "喝点水；如有需要，起身去趟洗手间。";
         return water ? "喝水时间到了，给自己补充一点水分。" : "如有需要，起身去趟洗手间吧。";
     }
 }
@@ -157,7 +162,7 @@ public sealed class SettingsForm : Form
 {
     public Settings Result;
     private readonly Settings original;
-    private NumericUpDown salary, dayCount;
+    private NumericUpDown salary, dayCount, waterInterval, restroomInterval;
     private ComboBox mode, rest, reminderMode, widgetSize;
     private DateTimePicker start, end, pause, resume, anchor;
     private CheckBox lunch, manual, onTop, reminders;
@@ -171,7 +176,7 @@ public sealed class SettingsForm : Form
         Font = new Font("Microsoft YaHei UI", 10);
         BackColor = Color.FromArgb(245, 248, 245);
         ForeColor = ink;
-        ClientSize = new Size(470, 774);
+        ClientSize = new Size(470, 818);
         FormBorderStyle = FormBorderStyle.FixedDialog;
         MaximizeBox = false; MinimizeBox = false; StartPosition = FormStartPosition.CenterScreen;
         AutoScaleMode = AutoScaleMode.Dpi;
@@ -204,18 +209,22 @@ public sealed class SettingsForm : Form
         widgetSize = new ComboBox { Name = "WidgetSize", Location = new Point(130, 451), Width = 175, DropDownStyle = ComboBoxStyle.DropDownList };
         widgetSize.Items.AddRange(new object[] { "紧凑 300×360", "迷你 260×300" }); widgetSize.SelectedIndex = settings.WidgetSize; Controls.Add(widgetSize);
         onTop = new CheckBox { Text = "保持置顶", Location = new Point(315, 454), Size = new Size(126, 29), Checked = settings.AlwaysOnTop }; Controls.Add(onTop);
-        reminders = new CheckBox { Text = "开启每半小时休息提醒", Location = new Point(24, 491), Size = new Size(280, 29), Checked = settings.RemindersEnabled }; Controls.Add(reminders);
+        reminders = new CheckBox { Text = "开启休息提醒", Location = new Point(24, 491), Size = new Size(280, 29), Checked = settings.RemindersEnabled }; Controls.Add(reminders);
         Button previewReminder = new Button { Text = "预览提醒", Location = new Point(315, 491), Size = new Size(126, 29), FlatStyle = FlatStyle.Flat }; Controls.Add(previewReminder);
         LabelAt("提醒方式", 24, 535, 150);
         reminderMode = new ComboBox { Location = new Point(197, 532), Width = 244, DropDownStyle = ComboBoxStyle.DropDownList };
-        reminderMode.Items.AddRange(new object[] { "交替提醒喝水 / 如厕", "只提醒喝水", "只提醒如厕" }); reminderMode.SelectedIndex = settings.ReminderMode; Controls.Add(reminderMode);
-        Label reminderNote = LabelAt("仅工作日上班时提醒，午休暂停，累计30分钟提醒。\n保存设置或重启后重新计时；程序退出后停止。", 24, 575, 422);
+        reminderMode.Items.AddRange(new object[] { "分别提醒喝水 / 如厕", "只提醒喝水", "只提醒如厕" }); reminderMode.SelectedIndex = settings.ReminderMode; Controls.Add(reminderMode);
+        LabelAt("喝水间隔 / 分", 24, 576, 127);
+        waterInterval = new NumericUpDown { Name = "WaterInterval", Location = new Point(155, 574), Width = 62, Minimum = 1, Maximum = 1440, Value = settings.WaterIntervalMinutes }; Controls.Add(waterInterval);
+        LabelAt("如厕间隔 / 分", 236, 576, 127);
+        restroomInterval = new NumericUpDown { Name = "RestroomInterval", Location = new Point(379, 574), Width = 62, Minimum = 1, Maximum = 1440, Value = settings.RestroomIntervalMinutes }; Controls.Add(restroomInterval);
+        Label reminderNote = LabelAt("按各自间隔累计上班时间，午休暂停。\n同时到期合并弹窗；保存设置或重启后重新计时。", 24, 619, 422);
         reminderNote.Size = new Size(422, 50); reminderNote.Font = new Font(Font.FontFamily, 9);
-        Label note = LabelAt("自动天数不含节假日和调休；手动覆盖仅当月有效。\n手动天数影响日薪；每日是否上班仍按休息制判断。", 24, 638, 422);
+        Label note = LabelAt("自动天数不含节假日和调休；手动覆盖仅当月有效。\n手动天数影响日薪；每日是否上班仍按休息制判断。", 24, 682, 422);
         note.Size = new Size(422, 52); note.Font = new Font(Font.FontFamily, 9); note.ForeColor = calculated.ForeColor;
-        Button save = new Button { Text = "保存设置", Location = new Point(252, 707), Size = new Size(189, 43), BackColor = Color.FromArgb(31, 94, 74), ForeColor = Color.White, FlatStyle = FlatStyle.Flat };
+        Button save = new Button { Text = "保存设置", Location = new Point(252, 751), Size = new Size(189, 43), BackColor = Color.FromArgb(31, 94, 74), ForeColor = Color.White, FlatStyle = FlatStyle.Flat };
         save.FlatAppearance.BorderSize = 0; Controls.Add(save);
-        Button cancel = new Button { Text = "取消", Location = new Point(142, 707), Size = new Size(94, 43), DialogResult = DialogResult.Cancel }; Controls.Add(cancel);
+        Button cancel = new Button { Text = "取消", Location = new Point(142, 751), Size = new Size(94, 43), DialogResult = DialogResult.Cancel }; Controls.Add(cancel);
         AcceptButton = save; CancelButton = cancel;
         if (settings.Theme == 0)
         {
@@ -237,7 +246,8 @@ public sealed class SettingsForm : Form
         previewReminder.BackColor = BackColor; previewReminder.ForeColor = ForeColor;
         previewReminder.Click += delegate
         {
-            ReminderPopup popup = new ReminderPopup(reminderMode.SelectedIndex == 2 ? "如有需要，起身去趟洗手间吧。" : "喝水时间到了，给自己补充一点水分。", settings.Theme);
+            string message = reminderMode.SelectedIndex == 0 ? "喝点水；如有需要，起身去趟洗手间。" : reminderMode.SelectedIndex == 2 ? "如有需要，起身去趟洗手间吧。" : "喝水时间到了，给自己补充一点水分。";
+            ReminderPopup popup = new ReminderPopup(message, settings.Theme);
             popup.FormClosed += delegate { popup.Dispose(); }; popup.Show();
         };
         foreach (ComboBox combo in new ComboBox[] { mode, rest, reminderMode, widgetSize })
@@ -259,6 +269,8 @@ public sealed class SettingsForm : Form
             rest.Enabled = mode.SelectedIndex == 0; anchor.Enabled = mode.SelectedIndex == 2;
             dayCount.Enabled = manual.Checked; pause.Enabled = resume.Enabled = lunch.Checked;
             reminderMode.Enabled = reminders.Checked;
+            waterInterval.Enabled = reminders.Checked && reminderMode.SelectedIndex != 2;
+            restroomInterval.Enabled = reminders.Checked && reminderMode.SelectedIndex != 1;
             Settings preview = original.Copy(); preview.WorkMode = mode.SelectedIndex; preview.SingleRest = rest.SelectedIndex;
             // 预览不修改保存的锚点；日期输入是否合法由保存时统一校验。
             preview.DoubleSaturday = anchor.Value.Date.AddDays((6 - (int)anchor.Value.DayOfWeek + 7) % 7);
@@ -267,6 +279,7 @@ public sealed class SettingsForm : Form
         mode.SelectedIndexChanged += update; rest.SelectedIndexChanged += update; anchor.ValueChanged += update;
         manual.CheckedChanged += update; lunch.CheckedChanged += update; update(this, EventArgs.Empty);
         reminders.CheckedChanged += update;
+        reminderMode.SelectedIndexChanged += update;
         save.Click += delegate
         {
             Settings next = original.Copy();
@@ -276,6 +289,7 @@ public sealed class SettingsForm : Form
             next.Start = start.Value.ToString("HH:mm"); next.End = end.Value.ToString("HH:mm");
             next.HasBreak = lunch.Checked; next.BreakStart = pause.Value.ToString("HH:mm"); next.BreakEnd = resume.Value.ToString("HH:mm"); next.AlwaysOnTop = onTop.Checked;
             next.RemindersEnabled = reminders.Checked; next.ReminderMode = reminderMode.SelectedIndex;
+            next.WaterIntervalMinutes = (int)waterInterval.Value; next.RestroomIntervalMinutes = (int)restroomInterval.Value;
             next.WidgetSize = widgetSize.SelectedIndex;
             try { Storage.Save(next); Result = next; DialogResult = DialogResult.OK; Close(); }
             catch (Exception ex) { MessageBox.Show(this, ex.Message, "设置未保存", MessageBoxButtons.OK, MessageBoxIcon.Warning); }
@@ -708,6 +722,11 @@ public static class Tests
                                 SettingsForm dialog = form as SettingsForm;
                                 if (dialog == null) continue;
                                 interact.Stop(); ((ComboBox)dialog.Controls["WidgetSize"]).SelectedIndex = selected;
+                                if (selected == 1)
+                                {
+                                    ((NumericUpDown)dialog.Controls["WaterInterval"]).Value = 17;
+                                    ((NumericUpDown)dialog.Controls["RestroomInterval"]).Value = 53;
+                                }
                                 ((Button)dialog.AcceptButton).PerformClick(); break;
                             }
                         };
@@ -720,6 +739,7 @@ public static class Tests
                     check(buttonsInside, "All feature buttons remain inside widget: " + target);
                 }
                 check(Storage.Load().MonthlySalary == s.MonthlySalary && Storage.Load().Theme == s.Theme && Storage.Load().RemindersEnabled == s.RemindersEnabled, "Size switching preserves salary, theme and reminder options");
+                check(Storage.Load().WaterIntervalMinutes == 17 && Storage.Load().RestroomIntervalMinutes == 53, "Custom intervals save through actual settings dialog and survive size changes");
                 using (Widget restarted = new Widget(Storage.Load()))
                     check(restarted.ClientSize == new Size(300, 360), "Saved size applies on restart");
                 themed.Hide();
@@ -735,15 +755,16 @@ public static class Tests
             DateTime morning = new DateTime(2026, 11, 2, 9, 0, 0);
             ReminderClock clock = new ReminderClock(morning);
             check(clock.Poll(remind, morning.AddMinutes(29)) == null, "No early reminder");
-            check(clock.Poll(remind, morning.AddMinutes(30)).Contains("喝水"), "First reminder at thirty working minutes");
+            string together = clock.Poll(remind, morning.AddMinutes(30));
+            check(together.Contains("喝") && together.Contains("洗手间"), "Equal intervals merge both reminders at thirty working minutes");
             check(clock.Poll(remind, morning.AddMinutes(30).AddSeconds(1)) == null, "No duplicate reminder");
-            check(clock.Poll(remind, morning.AddMinutes(60)).Contains("洗手间"), "Second reminder alternates to restroom");
-            check(clock.Poll(remind, morning.AddMinutes(90)).Contains("喝水"), "Third reminder alternates back to water");
+            check(clock.Poll(remind, morning.AddMinutes(60)).Contains("洗手间"), "Both intervals run again after another thirty minutes");
+            check(clock.Poll(remind, morning.AddMinutes(90)).Contains("喝"), "Repeated reminder keeps independent clocks running");
             clock.Reset(new DateTime(2026, 11, 2, 11, 45, 0));
             check(clock.Poll(remind, new DateTime(2026, 11, 2, 12, 0, 0)) == null, "No popup at lunch start");
             check(clock.Poll(remind, new DateTime(2026, 11, 2, 12, 50, 0)) == null, "Lunch does not accrue time");
             check(clock.Poll(remind, new DateTime(2026, 11, 2, 13, 14, 59)) == null, "Paused partial interval resumes accurately");
-            check(clock.Poll(remind, new DateTime(2026, 11, 2, 13, 15, 0)).Contains("喝水"), "Fifteen minutes on each side of lunch triggers reminder");
+            check(clock.Poll(remind, new DateTime(2026, 11, 2, 13, 15, 0)).Contains("喝"), "Fifteen minutes on each side of lunch triggers reminder");
             clock.Reset(morning.AddHours(8.5));
             check(clock.Poll(remind, morning.AddHours(9)) == null, "No popup at end of shift");
             clock.Reset(morning.AddDays(-1));
@@ -763,8 +784,38 @@ public static class Tests
             check(clock.Poll(remind, morning.AddMinutes(30)).Contains("喝水") && clock.Poll(remind, morning.AddMinutes(60)).Contains("喝水"), "Water-only mode");
             remind.ReminderMode = 2; clock.Reset(morning);
             check(clock.Poll(remind, morning.AddMinutes(30)).Contains("洗手间"), "Restroom-only mode");
+            remind.ReminderMode = 0; remind.WaterIntervalMinutes = 20; remind.RestroomIntervalMinutes = 45; clock.Reset(morning);
+            check(clock.Poll(remind, morning.AddMinutes(19)) == null, "Custom intervals do not remind early");
+            string waterOnly = clock.Poll(remind, morning.AddMinutes(20));
+            check(waterOnly.Contains("喝水") && !waterOnly.Contains("洗手间"), "Water interval fires independently at twenty minutes");
+            check(clock.Poll(remind, morning.AddMinutes(40)).Contains("喝水"), "Water repeats before first restroom reminder");
+            string restroomOnly = clock.Poll(remind, morning.AddMinutes(45));
+            check(restroomOnly.Contains("洗手间") && !restroomOnly.Contains("喝"), "Restroom clock is not reset by water reminders");
+            check(clock.Poll(remind, morning.AddMinutes(60)).Contains("喝水") && clock.Poll(remind, morning.AddMinutes(65)) == null, "Restroom reminder does not reset water clock");
+            remind.WaterIntervalMinutes = 30; remind.RestroomIntervalMinutes = 60; clock.Reset(morning);
+            check(!clock.Poll(remind, morning.AddMinutes(30)).Contains("洗手间"), "Thirty-minute water reminder leaves sixty-minute restroom clock running");
+            string merged = clock.Poll(remind, morning.AddMinutes(60));
+            check(merged.Contains("喝") && merged.Contains("洗手间"), "Different intervals due together merge into one popup");
+            remind.WaterIntervalMinutes = 15; remind.RestroomIntervalMinutes = 40; clock.Reset(new DateTime(2026, 11, 2, 11, 50, 0));
+            check(clock.Poll(remind, new DateTime(2026, 11, 2, 12, 30, 0)) == null, "Lunch pauses both custom intervals");
+            check(clock.Poll(remind, new DateTime(2026, 11, 2, 13, 5, 0)).Contains("喝水"), "Custom water interval resumes after lunch");
+            check(clock.Poll(remind, new DateTime(2026, 11, 2, 13, 20, 0)).Contains("喝水"), "Short custom interval repeats after lunch");
+            check(!clock.Poll(remind, new DateTime(2026, 11, 2, 13, 30, 0)).Contains("喝"), "Long custom interval remains independent across lunch");
+            remind.ReminderMode = 1; remind.WaterIntervalMinutes = 1; clock.Reset(morning);
+            check(clock.Poll(remind, morning.AddSeconds(59)) == null && clock.Poll(remind, morning.AddMinutes(1)).Contains("喝水"), "Minimum one-minute interval boundary");
+            invalid = remind.Copy(); invalid.WaterIntervalMinutes = 0; rejected = false;
+            try { invalid.Validate(); } catch { rejected = true; } check(rejected, "Zero water interval rejected");
+            invalid = remind.Copy(); invalid.RestroomIntervalMinutes = 1441; rejected = false;
+            try { invalid.Validate(); } catch { rejected = true; } check(rejected, "Excessive restroom interval rejected");
+            using (StringReader legacy = new StringReader("<Settings><MonthlySalary>8800</MonthlySalary><ReminderMode>2</ReminderMode><RemindersEnabled>true</RemindersEnabled></Settings>"))
+            {
+                Settings old = (Settings)new XmlSerializer(typeof(Settings)).Deserialize(legacy);
+                check(old.WaterIntervalMinutes == 30 && old.RestroomIntervalMinutes == 30 && old.MonthlySalary == 8800 && old.ReminderMode == 2 && old.RemindersEnabled, "Legacy settings receive thirty-minute defaults without losing saved values");
+            }
+            remind.ReminderMode = 2;
             Storage.Save(remind);
             check(Storage.Load().RemindersEnabled && Storage.Load().ReminderMode == 2, "Reminder options persist");
+            check(Storage.Load().WaterIntervalMinutes == 1 && Storage.Load().RestroomIntervalMinutes == 40, "Distinct custom intervals survive storage reload");
             using (StringReader legacy = new StringReader("<Settings><MonthlySalary>8800</MonthlySalary></Settings>"))
                 check(!((Settings)new XmlSerializer(typeof(Settings)).Deserialize(legacy)).RemindersEnabled, "Legacy settings keep reminders opt-in");
             using (ReminderPopup popup = new ReminderPopup("喝水时间到了，给自己补充一点水分。", 0))
