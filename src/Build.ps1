@@ -27,6 +27,7 @@ $writer.Write([uint16]1); $writer.Write([uint16]32); $writer.Write([uint32]$png.
 $writer.Dispose(); $stream.Dispose(); $graphics.Dispose(); $bitmap.Dispose(); $mint.Dispose(); $pen.Dispose()
 $exe = Join-Path $projectRoot '上班鼓励器.exe'
 $sourceFiles = @(Get-ChildItem -LiteralPath $PSScriptRoot -Filter '*.cs' | Select-Object -ExpandProperty FullName)
-& $compilerPath /nologo /target:winexe /optimize+ /utf8output /reference:System.Windows.Forms.dll /reference:System.Drawing.dll "/out:$exe" "/win32icon:$(Join-Path $projectRoot 'app.ico')" "/win32manifest:$(Join-Path $PSScriptRoot 'app.manifest')" $sourceFiles
+$wpfDirectory = Join-Path (Split-Path -Parent $compilerPath) 'WPF'
+& $compilerPath /nologo /target:winexe /optimize+ /utf8output /reference:System.Windows.Forms.dll /reference:System.Drawing.dll /reference:System.Xaml.dll "/reference:$(Join-Path $wpfDirectory 'WindowsBase.dll')" "/reference:$(Join-Path $wpfDirectory 'PresentationCore.dll')" "/reference:$(Join-Path $wpfDirectory 'PresentationFramework.dll')" "/out:$exe" "/win32icon:$(Join-Path $projectRoot 'app.ico')" "/win32manifest:$(Join-Path $PSScriptRoot 'app.manifest')" $sourceFiles
 if ($LASTEXITCODE -ne 0) { throw '编译失败。' }
 Write-Output "已生成：$exe"

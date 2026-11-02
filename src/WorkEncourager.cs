@@ -26,6 +26,8 @@ public class Settings
     public string LastSummaryDate = "";
     public bool PetEnabled = true, PetWalk = false;
     public int PetCharacter = 0, PetX = int.MinValue, PetY = int.MinValue;
+    public int PetPose = -1;
+    public double PetYaw = 25, PetPitch = 12;
     public string DetailOrder = "income,rate,progress,countdown,encouragement";
     public string DetailVisible = "income,rate,progress,countdown,encouragement";
     public string ManualMonth = DateTime.Today.ToString("yyyy-MM");
@@ -48,6 +50,8 @@ public class Settings
             throw new Exception("喝水和如厕间隔需在1至1440分钟之间。");
         if (WidgetSize < 0 || WidgetSize > 1) throw new Exception("挂件大小设置无效。");
         if (PetCharacter < 0 || PetCharacter >= PetArt.Names.Length) throw new Exception("桌宠形象设置无效。");
+        if (PetPose < -1 || PetPose > 3 || double.IsNaN(PetYaw) || double.IsInfinity(PetYaw) || PetYaw < 0 || PetYaw >= 360 || double.IsNaN(PetPitch) || double.IsInfinity(PetPitch) || PetPitch < -25 || PetPitch > 60)
+            throw new Exception("三维视角或姿态设置无效。");
         HashSet<string> order = new HashSet<string>((DetailOrder ?? "").Split(','));
         if (order.Count != DetailCard.Keys.Length || (DetailOrder ?? "").Split(',').Length != DetailCard.Keys.Length) throw new Exception("详情组件顺序无效。");
         foreach (string key in DetailCard.Keys) if (!order.Contains(key)) throw new Exception("详情组件顺序无效。");
@@ -450,6 +454,24 @@ public sealed class Widget : Form
             characters.DropDownItems.Add(item);
         }
         menu.Items.Add(characters);
+        ToolStripMenuItem poses = new ToolStripMenuItem("桌宠状态");
+        for (int i = -1; i < PetModel3D.PoseNames.Length; i++)
+        {
+            int pose = i;
+            ToolStripMenuItem item = new ToolStripMenuItem(i == -1 ? "随机（10–20秒切换）" : PetModel3D.PoseNames[i]);
+            item.Click += delegate
+            {
+                Settings next = settings.Copy(); next.PetPose = pose;
+                try { Storage.Save(next); settings = next; ApplyPet(); } catch (Exception ex) { MessageBox.Show(this, ex.Message, "姿态未保存"); }
+            };
+            poses.DropDownItems.Add(item);
+        }
+        menu.Items.Add(poses);
+        menu.Items.Add("重置三维视角", null, delegate
+        {
+            Settings next = settings.Copy(); next.PetYaw = 25; next.PetPitch = 12;
+            try { Storage.Save(next); settings = next; ApplyPet(); } catch (Exception ex) { MessageBox.Show(this, ex.Message, "视角未保存"); }
+        });
         ToolStripMenuItem petMode = new ToolStripMenuItem("启用桌宠模式");
         petMode.Click += delegate
         {
@@ -471,6 +493,8 @@ public sealed class Widget : Form
         {
             petMode.Checked = settings.PetEnabled; walk.Checked = settings.PetWalk;
             for (int i = 0; i < characters.DropDownItems.Count; i++) ((ToolStripMenuItem)characters.DropDownItems[i]).Checked = settings.PetCharacter == i;
+            for (int i = 0; i < poses.DropDownItems.Count; i++) ((ToolStripMenuItem)poses.DropDownItems[i]).Checked = settings.PetPose == i - 1;
+            poses.Text = "桌宠状态" + (pet == null ? "" : " · " + PetModel3D.PoseNames[pet.CurrentPose]);
         };
         tray.ContextMenuStrip = menu; ContextMenuStrip = menu;
         tray.DoubleClick += delegate { if (settings.PetEnabled) ApplyPet(); else { Show(); Activate(); } };
@@ -552,7 +576,11 @@ public sealed class Widget : Form
             {
                 settings.PetX = point.X; settings.PetY = point.Y;
                 try { Storage.Save(settings); } catch (Exception ex) { MessageBox.Show(this, ex.Message, "桌宠位置未保存"); }
-            }, ContextMenuStrip);
+            }, ContextMenuStrip, delegate(double yaw, double pitch)
+            {
+                settings.PetYaw = yaw; settings.PetPitch = pitch;
+                try { Storage.Save(settings); } catch (Exception ex) { MessageBox.Show(this, ex.Message, "视角未保存"); }
+            });
         pet.ApplySettings(settings); if (!pet.Visible) pet.Show();
     }
     public void SetComponentVisible(string key, bool visible)
@@ -718,6 +746,28 @@ public static class Program
         }
         if (args.Length > 0 && args[0] == "--preview")
         {
+            using (Bitmap poses = new Bitmap(PetArt.Names.Length * 200, 860))
+            using (Graphics g = Graphics.FromImage(poses))
+            {
+                g.Clear(Color.FromArgb(246, 247, 252));
+                for (int pose = 0; pose < 4; pose++) for (int character = 0; character < PetArt.Names.Length; character++)
+                {
+                    using (Bitmap image = PetModel3D.Render(character, 0, 18, pose, 25, 12, false, false)) g.DrawImage(image, character * 200, pose * 215);
+                    Widget.Write(g, PetArt.Names[character] + " · " + PetModel3D.PoseNames[pose], 9, Color.FromArgb(64, 69, 88), new RectangleF(character * 200, pose * 215 + 187, 200, 25), FontStyle.Bold, StringAlignment.Center);
+                }
+                poses.Save(Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "poses-3d-preview.png"));
+            }
+            using (Bitmap views = new Bitmap(1000, 220))
+            using (Graphics g = Graphics.FromImage(views))
+            {
+                g.Clear(Color.FromArgb(246, 247, 252)); double[] angles = { 0, 45, 90, 180, 270 };
+                for (int index = 0; index < angles.Length; index++)
+                {
+                    using (Bitmap image = PetModel3D.Render(4, 0, 18, 0, angles[index], 12, false, false)) g.DrawImage(image, index * 200, 0);
+                    Widget.Write(g, angles[index] + "°", 9, Color.FromArgb(64, 69, 88), new RectangleF(index * 200, 187, 200, 25), FontStyle.Bold, StringAlignment.Center);
+                }
+                views.Save(Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "views-3d-preview.png"));
+            }
             using (Bitmap sheet = new Bitmap(PetArt.Names.Length * 200, 460))
             using (Graphics g = Graphics.FromImage(sheet))
             {
@@ -942,6 +992,44 @@ public static class Tests
             Settings petSettings = new Settings { PetCharacter = 3, PetX = 100, PetY = 200, PetWalk = true, DailySummaryEnabled = false };
             Storage.Save(petSettings);
             check(Storage.Load().PetCharacter == 3 && Storage.Load().PetX == 100 && Storage.Load().PetY == 200 && Storage.Load().PetWalk, "Pet character, position and walking option persist");
+            petSettings.PetYaw = 145; petSettings.PetPitch = 35; petSettings.PetPose = 3; Storage.Save(petSettings);
+            check(Storage.Load().PetYaw == 145 && Storage.Load().PetPitch == 35 && Storage.Load().PetPose == 3, "Three-dimensional camera and manual pose persist");
+            DateTime behaviorTime = new DateTime(2026, 11, 2, 10, 0, 0);
+            PetBehavior behavior = new PetBehavior(behaviorTime, 17); HashSet<int> seenPoses = new HashSet<int>();
+            check((behavior.NextChange - behaviorTime).TotalSeconds >= 10 && (behavior.NextChange - behaviorTime).TotalSeconds <= 20, "Automatic pose initially waits ten to twenty seconds");
+            check(behavior.Update(-1, behavior.NextChange.AddMilliseconds(-1), false) == 0, "Pose does not change before its deadline");
+            bool correctIntervals = true, noImmediateRepeat = true;
+            for (int i = 0; i < 40; i++)
+            {
+                int before = behavior.Current; DateTime due = behavior.NextChange;
+                int after = behavior.Update(-1, due, false); seenPoses.Add(after);
+                if (after == before) noImmediateRepeat = false;
+                double seconds = (behavior.NextChange - due).TotalSeconds; if (seconds < 10 || seconds > 20) correctIntervals = false;
+            }
+            check(correctIntervals && noImmediateRepeat && seenPoses.Count == 4, "Random behavior covers all four poses without immediate repeats and uses ten-to-twenty-second intervals");
+            int pausedPose = behavior.Current; DateTime pausedAt = behavior.NextChange.AddSeconds(5);
+            check(behavior.Update(-1, pausedAt, true) == pausedPose, "Speaking or interaction holds the current pose");
+            check(behavior.Update(1, pausedAt, false) == 1 && behavior.Update(1, pausedAt.AddMinutes(5), false) == 1, "Manual sleeping pose stays selected");
+            check(behavior.Update(-1, pausedAt.AddMinutes(6), false) == 1, "Returning to automatic mode starts a new waiting interval");
+            using (Bitmap front = PetModel3D.Render(4, 0, 10, 0, 0, 12, false, false))
+            using (Bitmap back = PetModel3D.Render(4, 0, 10, 0, 180, 12, false, false))
+            {
+                int differences = 0;
+                for (int y = 0; y < front.Height; y += 2) for (int x = 0; x < front.Width; x += 2) if (front.GetPixel(x, y) != back.GetPixel(x, y)) differences++;
+                check(differences > 400, "Camera rotation reveals a different three-dimensional back view");
+            }
+            for (int pose = 0; pose < 4; pose++)
+            using (Bitmap view = PetModel3D.Render(0, 0, 10, pose, 35, 20, false, false))
+            {
+                int count = 0; for (int y = 0; y < view.Height; y += 3) for (int x = 0; x < view.Width; x += 3) if (view.GetPixel(x, y).A > 100) count++;
+                check(count > 150 && view.GetPixel(0, 0).A == 0, "Three-dimensional pose renders a visible model on transparent background: " + pose);
+            }
+            System.Diagnostics.Stopwatch renderWatch = System.Diagnostics.Stopwatch.StartNew();
+            for (int i = 0; i < 20; i++) using (Bitmap rendered = PetModel3D.Render(0, 0, i, 0, 25, 12, false, false)) { }
+            report.AppendLine("Render benchmark: " + (renderWatch.Elapsed.TotalMilliseconds / 20).ToString("F1", CultureInfo.InvariantCulture) + " ms/frame (warm renderer)");
+            renderWatch.Restart();
+            for (int i = 0; i < 20; i++) using (Bitmap rendered = PetModel3D.Render(0, 0, i + 48, 0, 25, 12, false, false)) { }
+            report.AppendLine("Cached animation benchmark: " + (renderWatch.Elapsed.TotalMilliseconds / 20).ToString("F2", CultureInfo.InvariantCulture) + " ms/frame");
             for (int character = 0; character < PetArt.Names.Length; character++)
             using (Bitmap petImage = PetArt.Render(character, 0, 10, false, false))
             {
@@ -965,6 +1053,10 @@ public static class Tests
             }
             invalid = s.Copy(); invalid.DetailOrder = "income,income,progress,countdown,encouragement"; rejected = false;
             try { invalid.Validate(); } catch { rejected = true; } check(rejected, "Duplicate component order is rejected");
+            invalid = s.Copy(); invalid.PetPose = 4; rejected = false;
+            try { invalid.Validate(); } catch { rejected = true; } check(rejected, "Unknown three-dimensional pose rejected");
+            invalid = s.Copy(); invalid.PetYaw = double.NaN; rejected = false;
+            try { invalid.Validate(); } catch { rejected = true; } check(rejected, "Invalid camera value rejected");
             Settings remind = new Settings { RemindersEnabled = true };
             DateTime morning = new DateTime(2026, 11, 2, 9, 0, 0);
             ReminderClock clock = new ReminderClock(morning);
