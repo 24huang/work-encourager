@@ -15,6 +15,22 @@ public static class PetArt
 }
 
 
+// 预览与点击固定的详情分开管理，拖动或点击后的同一次悬停不会反复弹出预览。
+public sealed class PetHoverState
+{
+    private DateTime entered;
+    private bool inside, suppressed;
+    public bool Inside { get { return inside; } }
+    public void Enter(DateTime now) { inside = true; suppressed = false; entered = now; }
+    public void Leave() { inside = false; suppressed = false; }
+    public void Suppress() { suppressed = true; }
+    public bool ShouldShow(DateTime now, bool blocked)
+    {
+        if (blocked) entered = now;
+        return inside && !suppressed && !blocked && (now - entered).TotalMilliseconds >= 450;
+    }
+}
+
 public sealed class DesktopPet : Form
 {
     private Settings settings;
@@ -22,6 +38,9 @@ public sealed class DesktopPet : Form
     private readonly Action toggleDetails;
     private readonly Action<Point> moved;
     private readonly Action<double, double> viewChanged;
+    private readonly Action<bool> hoverChanged;
+    private readonly PetHoverState hover = new PetHoverState();
+    private bool previewVisible;
     private readonly ContextMenuStrip petMenu;
     private readonly PetBehavior behavior = new PetBehavior(DateTime.Now, Environment.TickCount);
     private Point down, origin;
@@ -39,9 +58,9 @@ public sealed class DesktopPet : Form
     [DllImport("gdi32.dll")] private static extern bool DeleteObject(IntPtr value);
     [DllImport("gdi32.dll")] private static extern bool DeleteDC(IntPtr dc);
     [DllImport("user32.dll", SetLastError = true)] private static extern bool UpdateLayeredWindow(IntPtr window, IntPtr dst, ref XY position, ref XY size, IntPtr src, ref XY source, int color, ref Blend blend, int flags);
-    public DesktopPet(Settings value, Action toggle, Action<Point> onMoved, ContextMenuStrip menu, Action<double, double> onViewChanged = null)
+    public DesktopPet(Settings value, Action toggle, Action<Point> onMoved, ContextMenuStrip menu, Action<double, double> onViewChanged = null, Action<bool> onHoverChanged = null)
     {
-        settings = value; toggleDetails = toggle; moved = onMoved; petMenu = menu; viewChanged = onViewChanged;
+        settings = value; toggleDetails = toggle; moved = onMoved; petMenu = menu; viewChanged = onViewChanged; hoverChanged = onHoverChanged;
         yaw = value.PetYaw; pitch = value.PetPitch;
         Text = "桌宠 · 上班鼓励器"; ClientSize = new Size(200, 190); FormBorderStyle = FormBorderStyle.None;
         ShowInTaskbar = false; StartPosition = FormStartPosition.Manual; AutoScaleMode = AutoScaleMode.None;
@@ -53,9 +72,10 @@ public sealed class DesktopPet : Form
         timer.Interval = 100; timer.Tick += delegate
         {
             frame++;
-            if (!Visible) return;
-            behavior.Update(settings.PetPose, DateTime.Now, Paused || Speaking || dragging || rotating);
-            bool walk = settings.PetWalk && CurrentPose == 0 && !Paused && !Speaking && !dragging && !rotating && frame % 170 > 95;
+            if (!Visible) { hover.Leave(); RefreshHover(); return; }
+            RefreshHover();
+            behavior.Update(settings.PetPose, DateTime.Now, Paused || Speaking || dragging || rotating || hover.Inside);
+            bool walk = settings.PetWalk && CurrentPose == 0 && !Paused && !Speaking && !dragging && !rotating && !hover.Inside && frame % 170 > 95;
             if (walk)
             {
                 Rectangle screen = Screen.FromRectangle(Bounds).WorkingArea;
@@ -66,9 +86,12 @@ public sealed class DesktopPet : Form
             Draw(walk);
         };
         Shown += delegate { Draw(false); timer.Start(); };
+        MouseEnter += delegate { hover.Enter(DateTime.UtcNow); RefreshHover(); };
+        MouseLeave += delegate { hover.Leave(); RefreshHover(); };
         MouseDown += delegate(object sender, MouseEventArgs e)
         {
             if (Paused || (e.Button != MouseButtons.Left && e.Button != MouseButtons.Right)) return;
+            hover.Suppress(); RefreshHover();
             dragging = e.Button == MouseButtons.Left; rotating = e.Button == MouseButtons.Right;
             travelled = false; down = Cursor.Position; origin = Location; downYaw = yaw; downPitch = pitch; Capture = true;
         };
@@ -103,6 +126,11 @@ public sealed class DesktopPet : Form
         };
     }
     protected override bool ShowWithoutActivation { get { return true; } }
+    private void RefreshHover()
+    {
+        bool show = hover.ShouldShow(DateTime.UtcNow, Paused || Speaking || dragging || rotating || petMenu.Visible || !settings.HoverEnabled);
+        if (show != previewVisible) { previewVisible = show; if (hoverChanged != null) hoverChanged(show); }
+    }
     protected override CreateParams CreateParams { get { CreateParams p = base.CreateParams; p.ExStyle |= 0x00080000 | 0x08000000; return p; } }
     public void ApplySettings(Settings value)
     {
@@ -113,7 +141,7 @@ public sealed class DesktopPet : Form
     private void Draw(bool walking)
     {
         if (!IsHandleCreated) return;
-        int pose = behavior.Update(settings.PetPose, DateTime.Now, Paused || Speaking || dragging || rotating);
+        int pose = behavior.Update(settings.PetPose, DateTime.Now, Paused || Speaking || dragging || rotating || hover.Inside);
         using (Bitmap bitmap = PetModel3D.Render(settings.PetCharacter, settings.Theme, frame, pose, yaw, pitch, walking, Speaking))
         {
             IntPtr screen = GetDC(IntPtr.Zero), dc = CreateCompatibleDC(screen), image = bitmap.GetHbitmap(Color.FromArgb(0));

@@ -7,6 +7,8 @@ public sealed class DetailCard : Control
 {
     public static readonly string[] Keys = { "income", "rate", "progress", "countdown", "encouragement" };
     public static readonly string[] Titles = { "今日收入", "每秒收入", "上班进度", "剩余有效工时", "鼓励语" };
+    private static readonly string[] Phrases = { "每一点努力，都在靠近生活的小目标。", "工作有进度，生活也要留一点甜。", "认真上班，也记得适时起身喝水。" };
+    public static string EncouragementAt(DateTime now) { return Phrases[(now.DayOfYear + now.Hour / 2) % Phrases.Length]; }
     public readonly string Key;
     private Settings settings;
     private Snapshot snapshot;
@@ -102,8 +104,7 @@ public sealed class DetailCard : Control
         }
         else
         {
-            string[] phrases = { "每一点努力，都在靠近生活的小目标。", "工作有进度，生活也要留一点甜。", "认真上班，也记得适时起身喝水。" };
-            Widget.Write(g, phrases[(DateTime.Now.DayOfYear + DateTime.Now.Hour / 2) % phrases.Length], mini ? 7.5f : 8, ink, new RectangleF(10, 23, Width - 20, Height - 24), FontStyle.Regular, StringAlignment.Near);
+            Widget.Write(g, EncouragementAt(DateTime.Now), mini ? 7.5f : 8, ink, new RectangleF(10, 23, Width - 20, Height - 24), FontStyle.Regular, StringAlignment.Near);
         }
     }
 }

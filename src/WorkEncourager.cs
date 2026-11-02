@@ -30,6 +30,8 @@ public class Settings
     public double PetYaw = 25, PetPitch = 12;
     public string DetailOrder = "income,rate,progress,countdown,encouragement";
     public string DetailVisible = "income,rate,progress,countdown,encouragement";
+    public bool HoverEnabled = true;
+    public string HoverVisible = "income,rate,progress,countdown";
     public string ManualMonth = DateTime.Today.ToString("yyyy-MM");
     public DateTime DoubleSaturday = new DateTime(2026, 10, 31);
 
@@ -56,6 +58,7 @@ public class Settings
         if (order.Count != DetailCard.Keys.Length || (DetailOrder ?? "").Split(',').Length != DetailCard.Keys.Length) throw new Exception("详情组件顺序无效。");
         foreach (string key in DetailCard.Keys) if (!order.Contains(key)) throw new Exception("详情组件顺序无效。");
         foreach (string key in (DetailVisible ?? "").Split(',')) if (key.Length > 0 && Array.IndexOf(DetailCard.Keys, key) < 0) throw new Exception("详情组件配置无效。");
+        foreach (string key in (HoverVisible ?? "").Split(',')) if (key.Length > 0 && Array.IndexOf(DetailCard.Keys, key) < 0) throw new Exception("悬浮信息配置无效。");
         if (DoubleSaturday.DayOfWeek != DayOfWeek.Saturday)
             throw new Exception("大小周的参考日期请选择一个双休周的周六。");
     }
@@ -346,36 +349,44 @@ public sealed class ReminderPopup : Form
     private readonly System.Windows.Forms.Timer dismiss = new System.Windows.Forms.Timer();
     private readonly ToolTip hint = new ToolTip();
     private readonly Button messageButton;
-    private readonly int bodyWidth;
+    private int bodyWidth;
+    private string content = "";
+    private readonly string speakerPrefix;
+    private static readonly TextFormatFlags TextFlags = TextFormatFlags.WordBreak | TextFormatFlags.NoPadding | TextFormatFlags.NoPrefix;
     private bool tailLeft;
-    public ReminderPopup(string message, int theme, bool dailySummary = false, string petSpeaker = null)
+    public ReminderPopup(string message, int theme, bool dailySummary = false, string petSpeaker = null, bool autoDismiss = true)
     {
         Text = dailySummary ? "下班总结 · 上班鼓励器" : "休息提醒 · 上班鼓励器";
         AutoScaleMode = AutoScaleMode.None; FormBorderStyle = FormBorderStyle.None;
         StartPosition = FormStartPosition.Manual; ShowInTaskbar = false; TopMost = true;
         BackColor = Color.FromArgb(149, 236, 105); ForeColor = Color.FromArgb(22, 37, 17);
         Font = new Font("Microsoft YaHei UI", 10); DoubleBuffered = true;
-        TextFormatFlags flags = TextFormatFlags.WordBreak | TextFormatFlags.NoPadding | TextFormatFlags.NoPrefix;
-        int lineWidth = Math.Min(220, Math.Max(52, TextRenderer.MeasureText(message, Font, Size.Empty, TextFormatFlags.SingleLine | TextFormatFlags.NoPadding | TextFormatFlags.NoPrefix).Width));
-        Size measured = TextRenderer.MeasureText(message, Font, new Size(lineWidth, 1000), flags);
-        bodyWidth = Math.Max(76, measured.Width + 24);
-        ClientSize = new Size(bodyWidth + 9, Math.Max(34, measured.Height + 18));
-        messageButton = new Button { Text = "", AccessibleName = (petSpeaker == null ? "" : petSpeaker + "：") + message, FlatStyle = FlatStyle.Flat, BackColor = BackColor, ForeColor = ForeColor, Cursor = Cursors.Hand, TabStop = false };
+        speakerPrefix = petSpeaker == null ? "" : petSpeaker + "：";
+        messageButton = new Button { Text = "", FlatStyle = FlatStyle.Flat, BackColor = BackColor, ForeColor = ForeColor, Cursor = Cursors.Hand, TabStop = false };
         messageButton.FlatAppearance.BorderSize = 0;
         messageButton.FlatAppearance.MouseOverBackColor = BackColor;
         messageButton.FlatAppearance.MouseDownBackColor = Color.FromArgb(136, 222, 94);
         messageButton.Paint += delegate(object sender, PaintEventArgs e)
         {
-            TextRenderer.DrawText(e.Graphics, message, Font, new Rectangle(10, 3, messageButton.Width - 20, messageButton.Height - 6), ForeColor, flags | TextFormatFlags.VerticalCenter);
+            TextRenderer.DrawText(e.Graphics, content, Font, new Rectangle(10, 3, messageButton.Width - 20, messageButton.Height - 6), ForeColor, TextFlags | TextFormatFlags.VerticalCenter);
         };
         messageButton.Click += delegate { Close(); }; Controls.Add(messageButton);
-        hint.SetToolTip(messageButton, "点击气泡关闭；15秒后自动收起");
+        hint.SetToolTip(messageButton, autoDismiss ? "点击气泡关闭；15秒后自动收起" : "鼠标移开桌宠后收起；点击桌宠展开详情");
         Click += delegate { Close(); };
-        UpdateBubble();
+        SetMessage(message);
         Rectangle area = Screen.FromPoint(Cursor.Position).WorkingArea;
         Location = new Point(area.Right - Width - 20, area.Bottom - Height - 20);
         dismiss.Interval = 15000; dismiss.Tick += delegate { Close(); };
-        Shown += delegate { dismiss.Start(); };
+        Shown += delegate { if (autoDismiss) dismiss.Start(); };
+    }
+    public void SetMessage(string message)
+    {
+        message = message ?? ""; if (content == message && bodyWidth > 0) return;
+        content = message; messageButton.AccessibleName = speakerPrefix + message;
+        int lineWidth = Math.Min(220, Math.Max(52, TextRenderer.MeasureText(message, Font, Size.Empty, TextFormatFlags.SingleLine | TextFormatFlags.NoPadding | TextFormatFlags.NoPrefix).Width));
+        Size measured = TextRenderer.MeasureText(message, Font, new Size(lineWidth, 1000), TextFlags);
+        bodyWidth = Math.Max(76, measured.Width + 24); ClientSize = new Size(bodyWidth + 9, Math.Max(34, measured.Height + 18));
+        UpdateBubble(); messageButton.Invalidate();
     }
     // 尖角随桌宠所在侧翻转；窗口区域只包含气泡，尖角周围可透过桌面。
     public void AimAtPet(Rectangle petBounds)
@@ -413,6 +424,8 @@ public sealed class Widget : Form
     private readonly System.Windows.Forms.Timer reminderTimer = new System.Windows.Forms.Timer();
     private readonly ReminderClock reminderClock = new ReminderClock(DateTime.Now);
     private ReminderPopup reminderPopup;
+    private ReminderPopup hoverPopup;
+    private ToolStripMenuItem hoverOptions;
     private DesktopPet pet;
     private Panel detailBody;
     private ContextMenuStrip componentMenu;
@@ -488,7 +501,21 @@ public sealed class Widget : Form
         };
         menu.Items.Add(walk);
         menu.Items.Add("配置详情组件", null, delegate { componentMenu.Show(Cursor.Position); });
-        menu.Items.Add("全部收起到托盘", null, delegate { Hide(); if (pet != null) pet.Hide(); });
+        hoverOptions = new ToolStripMenuItem("配置悬浮信息");
+        ToolStripMenuItem hoverEnabled = new ToolStripMenuItem("开启悬浮预览") { CheckOnClick = true };
+        hoverEnabled.Click += delegate
+        {
+            Settings next = settings.Copy(); next.HoverEnabled = hoverEnabled.Checked;
+            try { Storage.Save(next); settings = next; ShowHoverInfo(false); if (pet != null) pet.ApplySettings(settings); } catch (Exception ex) { MessageBox.Show(this, ex.Message, "悬浮设置未保存"); }
+        };
+        hoverOptions.DropDownItems.Add(hoverEnabled); hoverOptions.DropDownItems.Add(new ToolStripSeparator());
+        for (int i = 0; i < DetailCard.Keys.Length; i++)
+        {
+            string key = DetailCard.Keys[i]; ToolStripMenuItem item = new ToolStripMenuItem(DetailCard.Titles[i]) { CheckOnClick = true };
+            item.Click += delegate { SetHoverComponentVisible(key, item.Checked); }; hoverOptions.DropDownItems.Add(item);
+        }
+        menu.Items.Add(hoverOptions);
+        menu.Items.Add("全部收起到托盘", null, delegate { ShowHoverInfo(false); Hide(); if (pet != null) pet.Hide(); });
         menu.Items.Add("退出", null, delegate { exiting = true; Close(); });
         menu.Opening += delegate
         {
@@ -496,6 +523,9 @@ public sealed class Widget : Form
             for (int i = 0; i < characters.DropDownItems.Count; i++) ((ToolStripMenuItem)characters.DropDownItems[i]).Checked = settings.PetCharacter == i;
             for (int i = 0; i < poses.DropDownItems.Count; i++) ((ToolStripMenuItem)poses.DropDownItems[i]).Checked = settings.PetPose == i - 1;
             poses.Text = "桌宠状态" + (pet == null ? "" : " · " + PetModel3D.PoseNames[pet.CurrentPose]);
+            hoverEnabled.Checked = settings.HoverEnabled;
+            HashSet<string> hoverKeys = new HashSet<string>((settings.HoverVisible ?? "").Split(','));
+            for (int i = 0; i < DetailCard.Keys.Length; i++) ((ToolStripMenuItem)hoverOptions.DropDownItems[i + 2]).Checked = hoverKeys.Contains(DetailCard.Keys[i]);
         };
         tray.ContextMenuStrip = menu; ContextMenuStrip = menu;
         tray.DoubleClick += delegate { if (settings.PetEnabled) ApplyPet(); else { Show(); Activate(); } };
@@ -520,6 +550,7 @@ public sealed class Widget : Form
         timer.Interval = 100; timer.Tick += delegate
         {
             if (reminderPopup != null && !reminderPopup.IsDisposed && pet != null && pet.Visible) DesktopPet.PlaceBeside(reminderPopup, pet.Bounds);
+            if (hoverPopup != null && !hoverPopup.IsDisposed && pet != null && pet.Visible) DesktopPet.PlaceBeside(hoverPopup, pet.Bounds);
             if (!Visible) return;
             Snapshot current = WorkClock.At(settings, DateTime.Now);
             foreach (Control control in detailBody.Controls) { DetailCard cardControl = control as DetailCard; if (cardControl != null) cardControl.UpdateView(settings, current); }
@@ -529,6 +560,7 @@ public sealed class Widget : Form
         reminderTimer.Tick += delegate
         {
             DateTime now = DateTime.Now;
+            if (hoverPopup != null && !hoverPopup.IsDisposed) hoverPopup.SetMessage(BuildHoverMessage(settings, now));
             bool summary = WorkClock.SummaryDue(settings, now);
             string message;
             if (summary)
@@ -551,6 +583,7 @@ public sealed class Widget : Form
     }
     public void ShowMessage(string message, bool summary)
     {
+        ShowHoverInfo(false);
         if (reminderPopup != null) reminderPopup.Close();
         ReminderPopup popup = new ReminderPopup(message, settings.Theme, summary, settings.PetEnabled ? PetArt.Names[settings.PetCharacter] : null); reminderPopup = popup;
         if (settings.PetEnabled)
@@ -562,14 +595,56 @@ public sealed class Widget : Form
     }
     private void ToggleDetails()
     {
+        ShowHoverInfo(false);
         if (Visible) { Hide(); return; }
         if (pet != null && pet.Visible) DesktopPet.PlaceBeside(this, pet.Bounds);
         Show(); Activate();
+    }
+    public static string BuildHoverMessage(Settings value, DateTime now)
+    {
+        Snapshot current = WorkClock.At(value, now);
+        HashSet<string> selected = new HashSet<string>((value.HoverVisible ?? "").Split(','));
+        List<string> lines = new List<string>();
+        foreach (string key in DetailCard.Keys)
+        {
+            if (!selected.Contains(key)) continue;
+            if (key == "income") lines.Add("今日收入：" + (value.MonthlySalary == 0 ? "请先设置薪资" : "¥ " + current.Earned.ToString("N2")));
+            else if (key == "rate") lines.Add("每秒收入：" + (value.MonthlySalary == 0 ? "—" : "¥ " + current.PerSecond.ToString(current.PerSecond >= .0001m ? "0.0000" : "0.0000########")));
+            else if (key == "progress") lines.Add("上班进度：" + current.Progress.ToString("P1"));
+            else if (key == "countdown") lines.Add("剩余工时：" + (current.WorkingDay ? string.Format("{0:00}:{1:00}:{2:00}", (int)(current.Remaining / 3600), (int)(current.Remaining / 60) % 60, (int)current.Remaining % 60) : "今日休息"));
+            else if (key == "encouragement") lines.Add(DetailCard.EncouragementAt(now));
+        }
+        return string.Join("\n", lines.ToArray());
+    }
+    public void ShowHoverInfo(bool show)
+    {
+        if (!show)
+        {
+            ReminderPopup previous = hoverPopup; hoverPopup = null;
+            if (previous != null && !previous.IsDisposed) previous.Close();
+            return;
+        }
+        if (!settings.HoverEnabled || Visible || pet == null || !pet.Visible || reminderPopup != null && !reminderPopup.IsDisposed) return;
+        string message = BuildHoverMessage(settings, DateTime.Now); if (message.Length == 0) return;
+        if (hoverPopup != null && !hoverPopup.IsDisposed) { hoverPopup.SetMessage(message); return; }
+        ReminderPopup popup = new ReminderPopup(message, settings.Theme, false, null, false) { Text = "悬浮信息 · 上班鼓励器", Name = "HoverInfo" }; hoverPopup = popup;
+        popup.FormClosed += delegate { popup.Dispose(); if (hoverPopup == popup) hoverPopup = null; };
+        DesktopPet.PlaceBeside(popup, pet.Bounds); popup.Show();
+    }
+    public void SetHoverComponentVisible(string key, bool visible)
+    {
+        if (Array.IndexOf(DetailCard.Keys, key) < 0) return;
+        HashSet<string> selected = new HashSet<string>((settings.HoverVisible ?? "").Split(','));
+        if (visible) selected.Add(key); else selected.Remove(key);
+        List<string> items = new List<string>(); foreach (string item in DetailCard.Keys) if (selected.Contains(item)) items.Add(item);
+        Settings next = settings.Copy(); next.HoverVisible = string.Join(",", items.ToArray());
+        try { Storage.Save(next); settings = next; ShowHoverInfo(false); if (pet != null) pet.ApplySettings(settings); } catch (Exception ex) { MessageBox.Show(this, ex.Message, "悬浮内容未保存"); }
     }
     private void ApplyPet()
     {
         if (!settings.PetEnabled)
         {
+            ShowHoverInfo(false);
             if (pet != null) { pet.Dispose(); pet = null; }
             if (!Visible) Show(); return;
         }
@@ -582,7 +657,7 @@ public sealed class Widget : Form
             {
                 settings.PetYaw = yaw; settings.PetPitch = pitch;
                 try { Storage.Save(settings); } catch (Exception ex) { MessageBox.Show(this, ex.Message, "视角未保存"); }
-            });
+            }, ShowHoverInfo);
         pet.ApplySettings(settings); if (!pet.Visible) pet.Show();
     }
     public void SetComponentVisible(string key, bool visible)
@@ -665,6 +740,7 @@ public sealed class Widget : Form
     }
     private void OpenSettings()
     {
+        ShowHoverInfo(false);
         Show(); TopMost = false;
         if (pet != null) { pet.Paused = true; pet.Enabled = false; }
         using (SettingsForm form = new SettingsForm(settings))
@@ -708,7 +784,7 @@ public sealed class Widget : Form
     }
     protected override void Dispose(bool disposing)
     {
-        if (disposing) { timer.Dispose(); reminderTimer.Dispose(); if (pet != null) pet.Dispose(); if (componentMenu != null) componentMenu.Dispose(); if (reminderPopup != null) reminderPopup.Dispose(); if (tray != null) { tray.Visible = false; tray.Dispose(); } if (appIcon != null) appIcon.Dispose(); }
+        if (disposing) { timer.Dispose(); reminderTimer.Dispose(); if (hoverPopup != null) hoverPopup.Dispose(); if (pet != null) pet.Dispose(); if (componentMenu != null) componentMenu.Dispose(); if (reminderPopup != null) reminderPopup.Dispose(); if (tray != null) { tray.Visible = false; tray.Dispose(); } if (appIcon != null) appIcon.Dispose(); }
         base.Dispose(disposing);
     }
     public static GraphicsPath Rounded(Rectangle rect, int radius)
@@ -759,6 +835,12 @@ public static class Program
         }
         if (args.Length > 0 && args[0] == "--preview")
         {
+            using (ReminderPopup preview = new ReminderPopup(Widget.BuildHoverMessage(new Settings { MonthlySalary = 8800 }, DateTime.Now), 0, false, null, false))
+            using (Bitmap bitmap = new Bitmap(preview.Width, preview.Height))
+            {
+                preview.Opacity = 0; preview.Show(); Application.DoEvents(); preview.DrawToBitmap(bitmap, preview.ClientRectangle); preview.Hide(); ApplyWindowRegion(preview, bitmap);
+                bitmap.Save(Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "hover-preview.png"));
+            }
             using (Bitmap poses = new Bitmap(PetArt.Names.Length * 200, 860))
             using (Graphics g = Graphics.FromImage(poses))
             {
@@ -1008,6 +1090,42 @@ public static class Tests
             Settings petSettings = new Settings { PetCharacter = 3, PetX = 100, PetY = 200, PetWalk = true, DailySummaryEnabled = false };
             Storage.Save(petSettings);
             check(Storage.Load().PetCharacter == 3 && Storage.Load().PetX == 100 && Storage.Load().PetY == 200 && Storage.Load().PetWalk, "Pet character, position and walking option persist");
+            DateTime hoverTime = new DateTime(2026, 11, 2, 10, 0, 0);
+            PetHoverState hoverState = new PetHoverState(); hoverState.Enter(hoverTime);
+            check(!hoverState.ShouldShow(hoverTime.AddMilliseconds(449), false) && hoverState.ShouldShow(hoverTime.AddMilliseconds(450), false), "Hover preview waits for a short dwell");
+            hoverState.Leave(); check(!hoverState.ShouldShow(hoverTime.AddSeconds(2), false), "Leaving the pet hides hover preview");
+            hoverState.Enter(hoverTime); hoverState.Suppress(); check(!hoverState.ShouldShow(hoverTime.AddSeconds(2), false), "Clicking or dragging suppresses preview for the current hover");
+            hoverState.Leave(); hoverState.Enter(hoverTime); check(hoverState.ShouldShow(hoverTime.AddSeconds(1), false), "Reentering the pet permits hover preview again");
+            check(!hoverState.ShouldShow(hoverTime.AddSeconds(2), true) && !hoverState.ShouldShow(hoverTime.AddMilliseconds(2200), false) && hoverState.ShouldShow(hoverTime.AddMilliseconds(2500), false), "Preview waits again after a reminder or interaction blocks it");
+            Settings hoverConfig = new Settings { MonthlySalary = 8800, DailySummaryEnabled = false, HoverVisible = "rate,progress" };
+            string hoverText = Widget.BuildHoverMessage(hoverConfig, new DateTime(2026, 11, 2, 14, 0, 0));
+            check(hoverText.Contains("每秒收入") && hoverText.Contains("上班进度") && !hoverText.Contains("今日收入") && !hoverText.Contains("剩余工时") && !hoverText.Contains("月薪"), "Hover content respects its own selection without displaying monthly salary");
+            hoverConfig.HoverVisible = ""; check(Widget.BuildHoverMessage(hoverConfig, hoverTime) == "", "No selected hover fields produces no message");
+            hoverConfig.HoverVisible = "progress,encouragement"; hoverConfig.HoverEnabled = false; Storage.Save(hoverConfig);
+            check(!Storage.Load().HoverEnabled && Storage.Load().HoverVisible == hoverConfig.HoverVisible && Storage.Load().DetailVisible == hoverConfig.DetailVisible, "Hover configuration persists independently of detail components");
+            using (StringReader legacy = new StringReader("<Settings><MonthlySalary>8800</MonthlySalary></Settings>"))
+            {
+                Settings old = (Settings)new XmlSerializer(typeof(Settings)).Deserialize(legacy);
+                check(old.HoverEnabled && old.HoverVisible.Contains("income"), "Older configurations receive hover defaults");
+            }
+            hoverConfig.HoverEnabled = true; hoverConfig.HoverVisible = "income,rate,progress,countdown";
+            using (Widget hoverOwner = new Widget(hoverConfig))
+            {
+                hoverOwner.Show(); Application.DoEvents(); hoverOwner.ShowHoverInfo(true); Application.DoEvents();
+                Form shownHover = null; foreach (Form form in Application.OpenForms) if (form.Name == "HoverInfo") shownHover = form;
+                check(shownHover != null && shownHover.Visible && !hoverOwner.Visible, "Hover opens a separate preview without opening full details");
+                ToolStripMenuItem toggleDetails = null;
+                foreach (ToolStripItem item in hoverOwner.ContextMenuStrip.Items) if (item.Text == "展开 / 收起详情") toggleDetails = item as ToolStripMenuItem;
+                toggleDetails.PerformClick(); Application.DoEvents();
+                check(hoverOwner.Visible && shownHover.IsDisposed, "Click detail action replaces hover preview with pinned full details");
+                hoverOwner.ShowHoverInfo(false); check(hoverOwner.Visible, "Mouse leave does not close click-opened details");
+                hoverOwner.SetHoverComponentVisible("income", false);
+                check(!Storage.Load().HoverVisible.Contains("income") && Storage.Load().DetailVisible.Contains("income"), "Changing hover selection leaves detail components unchanged");
+                toggleDetails.PerformClick(); hoverOwner.ShowHoverInfo(true); Application.DoEvents();
+                hoverOwner.ShowMessage("测试提醒", false); Application.DoEvents();
+                bool previewRemains = false; foreach (Form form in Application.OpenForms) if (form.Name == "HoverInfo") previewRemains = true;
+                check(!previewRemains, "Reminder notifications take priority over hover preview");
+            }
             petSettings.PetYaw = 145; petSettings.PetPitch = 35; petSettings.PetPose = 3; Storage.Save(petSettings);
             check(Storage.Load().PetYaw == 145 && Storage.Load().PetPitch == 35 && Storage.Load().PetPose == 3, "Three-dimensional camera and manual pose persist");
             DateTime behaviorTime = new DateTime(2026, 11, 2, 10, 0, 0);
