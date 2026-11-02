@@ -1,0 +1,19 @@
+# 个人设置：包含月薪、作息、窗口位置等信息
+settings.xml
+settings.xml.*
+
+# 编译产物与本地验证文件
+*.exe
+*.pdb
+*.zip
+app.ico
+work/
+bin/
+obj/
+
+# 本地开发记录
+task_plan.md
+findings.md
+progress.md
+.env
+.env.*
