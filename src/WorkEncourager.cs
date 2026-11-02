@@ -1,5 +1,6 @@
 ﻿using System;
 using System.Drawing;
+using System.Collections.Generic;
 using System.Drawing.Drawing2D;
 using System.Globalization;
 using System.IO;
@@ -23,6 +24,10 @@ public class Settings
     public int WaterIntervalMinutes = 30, RestroomIntervalMinutes = 30;
     public bool DailySummaryEnabled = true;
     public string LastSummaryDate = "";
+    public bool PetEnabled = true, PetWalk = false;
+    public int PetCharacter = 0, PetX = int.MinValue, PetY = int.MinValue;
+    public string DetailOrder = "income,rate,progress,countdown,encouragement";
+    public string DetailVisible = "income,rate,progress,countdown,encouragement";
     public string ManualMonth = DateTime.Today.ToString("yyyy-MM");
     public DateTime DoubleSaturday = new DateTime(2026, 10, 31);
 
@@ -42,6 +47,11 @@ public class Settings
         if (WaterIntervalMinutes < 1 || WaterIntervalMinutes > 1440 || RestroomIntervalMinutes < 1 || RestroomIntervalMinutes > 1440)
             throw new Exception("喝水和如厕间隔需在1至1440分钟之间。");
         if (WidgetSize < 0 || WidgetSize > 1) throw new Exception("挂件大小设置无效。");
+        if (PetCharacter < 0 || PetCharacter >= PetArt.Names.Length) throw new Exception("桌宠形象设置无效。");
+        HashSet<string> order = new HashSet<string>((DetailOrder ?? "").Split(','));
+        if (order.Count != DetailCard.Keys.Length || (DetailOrder ?? "").Split(',').Length != DetailCard.Keys.Length) throw new Exception("详情组件顺序无效。");
+        foreach (string key in DetailCard.Keys) if (!order.Contains(key)) throw new Exception("详情组件顺序无效。");
+        foreach (string key in (DetailVisible ?? "").Split(',')) if (key.Length > 0 && Array.IndexOf(DetailCard.Keys, key) < 0) throw new Exception("详情组件配置无效。");
         if (DoubleSaturday.DayOfWeek != DayOfWeek.Saturday)
             throw new Exception("大小周的参考日期请选择一个双休周的周六。");
     }
@@ -172,9 +182,9 @@ public sealed class SettingsForm : Form
     public Settings Result;
     private readonly Settings original;
     private NumericUpDown salary, dayCount, waterInterval, restroomInterval;
-    private ComboBox mode, rest, reminderMode, widgetSize;
+    private ComboBox mode, rest, reminderMode, widgetSize, petCharacter;
     private DateTimePicker start, end, pause, resume, anchor;
-    private CheckBox lunch, manual, onTop, reminders, dailySummary;
+    private CheckBox lunch, manual, onTop, reminders, dailySummary, petEnabled;
     private Label calculated;
     private readonly Color ink = Color.FromArgb(32, 47, 44);
 
@@ -185,7 +195,7 @@ public sealed class SettingsForm : Form
         Font = new Font("Microsoft YaHei UI", 10);
         BackColor = Color.FromArgb(245, 248, 245);
         ForeColor = ink;
-        ClientSize = new Size(470, 854);
+        ClientSize = new Size(470, 898);
         FormBorderStyle = FormBorderStyle.FixedDialog;
         MaximizeBox = false; MinimizeBox = false; StartPosition = FormStartPosition.CenterScreen;
         AutoScaleMode = AutoScaleMode.Dpi;
@@ -235,6 +245,12 @@ public sealed class SettingsForm : Form
         Button save = new Button { Text = "保存设置", Location = new Point(252, 787), Size = new Size(189, 43), BackColor = Color.FromArgb(31, 94, 74), ForeColor = Color.White, FlatStyle = FlatStyle.Flat };
         save.FlatAppearance.BorderSize = 0; Controls.Add(save);
         Button cancel = new Button { Text = "取消", Location = new Point(142, 787), Size = new Size(94, 43), DialogResult = DialogResult.Cancel }; Controls.Add(cancel);
+        // 桌宠配置复用设置页，其余提醒区整体下移，工资和提醒字段不变。
+        foreach (Control control in Controls) if (control.Top >= 491) control.Top += 44;
+        LabelAt("桌宠形象", 24, 491, 105);
+        petCharacter = new ComboBox { Name = "PetCharacter", Location = new Point(130, 488), Width = 175, DropDownStyle = ComboBoxStyle.DropDownList };
+        petCharacter.Items.AddRange(PetArt.Names); petCharacter.SelectedIndex = settings.PetCharacter; Controls.Add(petCharacter);
+        petEnabled = new CheckBox { Name = "PetEnabled", Text = "启用桌宠", Location = new Point(315, 491), Size = new Size(126, 29), Checked = settings.PetEnabled }; Controls.Add(petEnabled);
         AcceptButton = save; CancelButton = cancel;
         if (settings.Theme == 0)
         {
@@ -257,10 +273,12 @@ public sealed class SettingsForm : Form
         previewReminder.Click += delegate
         {
             string message = reminderMode.SelectedIndex == 0 ? "喝点水；如有需要，起身去趟洗手间。" : reminderMode.SelectedIndex == 2 ? "如有需要，起身去趟洗手间吧。" : "喝水时间到了，给自己补充一点水分。";
+            Widget owner = Owner as Widget;
+            if (owner != null) { owner.ShowMessage(message, false); return; }
             ReminderPopup popup = new ReminderPopup(message, settings.Theme);
             popup.FormClosed += delegate { popup.Dispose(); }; popup.Show();
         };
-        foreach (ComboBox combo in new ComboBox[] { mode, rest, reminderMode, widgetSize })
+        foreach (ComboBox combo in new ComboBox[] { mode, rest, reminderMode, widgetSize, petCharacter })
         {
             combo.DrawMode = DrawMode.OwnerDrawFixed; combo.ItemHeight = 24;
             combo.DrawItem += delegate(object sender, DrawItemEventArgs e)
@@ -301,6 +319,7 @@ public sealed class SettingsForm : Form
             next.RemindersEnabled = reminders.Checked; next.ReminderMode = reminderMode.SelectedIndex;
             next.WaterIntervalMinutes = (int)waterInterval.Value; next.RestroomIntervalMinutes = (int)restroomInterval.Value;
             next.DailySummaryEnabled = dailySummary.Checked;
+            next.PetEnabled = petEnabled.Checked; next.PetCharacter = petCharacter.SelectedIndex;
             next.WidgetSize = widgetSize.SelectedIndex;
             try { Storage.Save(next); Result = next; DialogResult = DialogResult.OK; Close(); }
             catch (Exception ex) { MessageBox.Show(this, ex.Message, "设置未保存", MessageBoxButtons.OK, MessageBoxIcon.Warning); }
@@ -323,9 +342,12 @@ public sealed class ReminderPopup : Form
     private readonly System.Windows.Forms.Timer dismiss = new System.Windows.Forms.Timer();
     private readonly Color accent;
     private readonly bool summary;
-    public ReminderPopup(string message, int theme, bool dailySummary = false)
+    private readonly string speaker;
+    private readonly int petTheme;
+    public ReminderPopup(string message, int theme, bool dailySummary = false, string petSpeaker = null)
     {
         summary = dailySummary;
+        speaker = petSpeaker; petTheme = theme;
         bool pink = theme == 1;
         Text = summary ? "下班总结 · 上班鼓励器" : "休息提醒 · 上班鼓励器"; ClientSize = new Size(350, 177);
         AutoScaleMode = AutoScaleMode.None; FormBorderStyle = FormBorderStyle.None;
@@ -337,7 +359,7 @@ public sealed class ReminderPopup : Form
         Rectangle area = Screen.FromPoint(Cursor.Position).WorkingArea;
         Location = new Point(area.Right - Width - 20, area.Bottom - Height - 20);
         using (GraphicsPath path = Widget.Rounded(ClientRectangle, 18)) Region = new Region(path);
-        Controls.Add(new Label { Text = summary ? "下班啦，今天辛苦了！" : "该给自己一点休息时间了", Font = new Font(Font.FontFamily, 11, FontStyle.Bold), Bounds = new Rectangle(72, 24, 260, 27), ForeColor = ForeColor });
+        Controls.Add(new Label { Text = speaker != null ? speaker + (summary ? "：下班啦！" : "提醒你") : summary ? "下班啦，今天辛苦了！" : "该给自己一点休息时间了", Font = new Font(Font.FontFamily, 11, FontStyle.Bold), Bounds = new Rectangle(72, 24, 260, 27), ForeColor = ForeColor });
         Controls.Add(new Label { Text = message, Bounds = new Rectangle(72, 61, 258, 47), ForeColor = ForeColor });
         Button close = new Button { Text = "知道了", Bounds = new Rectangle(232, 126, 96, 31), FlatStyle = FlatStyle.Flat, BackColor = BackColor, ForeColor = accent, Cursor = Cursors.Hand };
         close.FlatAppearance.BorderColor = accent; close.Click += delegate { Close(); }; Controls.Add(close);
@@ -357,7 +379,11 @@ public sealed class ReminderPopup : Form
         using (Pen pen = new Pen(accent, 2))
         {
             using (GraphicsPath path = Widget.Rounded(new Rectangle(0, 0, Width - 1, Height - 1), 18)) g.DrawPath(pen, path);
-            if (summary)
+            if (speaker != null)
+            {
+                using (Bitmap avatar = PetArt.Render(Math.Max(0, Array.IndexOf(PetArt.Names, speaker)), petTheme, 0, false, true)) g.DrawImage(avatar, new Rectangle(7, 14, 68, 65));
+            }
+            else if (summary)
             {
                 g.DrawEllipse(pen, 25, 36, 33, 33);
                 TextRenderer.DrawText(g, "¥", Font, new Rectangle(25, 36, 33, 33), accent, TextFormatFlags.HorizontalCenter | TextFormatFlags.VerticalCenter);
@@ -382,12 +408,14 @@ public sealed class Widget : Form
     private readonly System.Windows.Forms.Timer reminderTimer = new System.Windows.Forms.Timer();
     private readonly ReminderClock reminderClock = new ReminderClock(DateTime.Now);
     private ReminderPopup reminderPopup;
+    private DesktopPet pet;
+    private Panel detailBody;
+    private ContextMenuStrip componentMenu;
     private NotifyIcon tray;
     private Icon appIcon;
     private bool dragging, exiting;
     private Point dragOffset;
     private Color background, accent, secondary, ink, muted, card;
-    private static readonly string[] phrases = { "每一点努力，都在靠近生活的小目标。", "进度慢慢走，属于你的时间会到来。", "工作有进度，生活也要留一点甜。", "认真上班，也记得适时起身喝水。", "今天的付出，正在变成生活的底气。" };
 
     public Widget(Settings s)
     {
@@ -406,27 +434,71 @@ public sealed class Widget : Form
         appIcon = File.Exists(iconPath) ? new Icon(iconPath) : (Icon)SystemIcons.Information.Clone(); Icon = appIcon;
         tray = new NotifyIcon { Icon = appIcon, Text = "上班鼓励器 · 双击显示", Visible = true };
         ContextMenuStrip menu = new ContextMenuStrip();
-        menu.Items.Add("显示挂件", null, delegate { Show(); Activate(); });
+        menu.Items.Add("显示桌宠 / 挂件", null, delegate { if (settings.PetEnabled) ApplyPet(); else { Show(); Activate(); } });
+        menu.Items.Add("展开 / 收起详情", null, delegate { ToggleDetails(); });
         menu.Items.Add("设置", null, delegate { OpenSettings(); });
+        ToolStripMenuItem characters = new ToolStripMenuItem("切换桌宠形象");
+        for (int i = 0; i < PetArt.Names.Length; i++)
+        {
+            int choice = i;
+            ToolStripMenuItem item = new ToolStripMenuItem(PetArt.Names[i]);
+            item.Click += delegate
+            {
+                Settings next = settings.Copy(); next.PetCharacter = choice; next.PetEnabled = true;
+                try { Storage.Save(next); settings = next; ApplyPet(); } catch (Exception ex) { MessageBox.Show(this, ex.Message, "桌宠设置未保存"); }
+            };
+            characters.DropDownItems.Add(item);
+        }
+        menu.Items.Add(characters);
+        ToolStripMenuItem petMode = new ToolStripMenuItem("启用桌宠模式");
+        petMode.Click += delegate
+        {
+            Settings next = settings.Copy(); next.PetEnabled = !next.PetEnabled;
+            try { Storage.Save(next); settings = next; ApplyPet(); if (next.PetEnabled) Hide(); } catch (Exception ex) { MessageBox.Show(this, ex.Message, "桌宠设置未保存"); }
+        };
+        menu.Items.Add(petMode);
+        ToolStripMenuItem walk = new ToolStripMenuItem("允许桌宠散步");
+        walk.Click += delegate
+        {
+            Settings next = settings.Copy(); next.PetWalk = !next.PetWalk;
+            try { Storage.Save(next); settings = next; ApplyPet(); } catch (Exception ex) { MessageBox.Show(this, ex.Message, "桌宠设置未保存"); }
+        };
+        menu.Items.Add(walk);
+        menu.Items.Add("配置详情组件", null, delegate { componentMenu.Show(Cursor.Position); });
+        menu.Items.Add("全部收起到托盘", null, delegate { Hide(); if (pet != null) pet.Hide(); });
         menu.Items.Add("退出", null, delegate { exiting = true; Close(); });
+        menu.Opening += delegate
+        {
+            petMode.Checked = settings.PetEnabled; walk.Checked = settings.PetWalk;
+            for (int i = 0; i < characters.DropDownItems.Count; i++) ((ToolStripMenuItem)characters.DropDownItems[i]).Checked = settings.PetCharacter == i;
+        };
         tray.ContextMenuStrip = menu; ContextMenuStrip = menu;
-        tray.DoubleClick += delegate { Show(); Activate(); };
+        tray.DoubleClick += delegate { if (settings.PetEnabled) ApplyPet(); else { Show(); Activate(); } };
+        detailBody = new Panel { Name = "DetailBody", AutoScroll = true, BackColor = background }; Controls.Add(detailBody);
+        componentMenu = new ContextMenuStrip();
+        AddButton("组件", 0, 0, 50, delegate(object sender, EventArgs e) { componentMenu.Show((Control)sender, new Point(0, 25)); });
         AddButton("⚙ 设置", 0, 0, 66, delegate { OpenSettings(); });
         AddButton("收起", 0, 0, 66, delegate { Hide(); });
         AddButton("◇ 换主题", 0, 0, 98, delegate
         {
             Settings next = settings.Copy(); next.Theme = 1 - next.Theme;
-            try { Storage.Save(next); settings = next; ApplyTheme(); Invalidate(); }
+            try { Storage.Save(next); settings = next; ApplyTheme(); if (pet != null) pet.ApplySettings(settings); Invalidate(); }
             catch (Exception ex) { MessageBox.Show(this, ex.Message, "主题未保存"); }
         });
         AddButton(s.AlwaysOnTop ? "已置顶" : "置顶", 0, 0, 66, delegate(object sender, EventArgs e)
         {
             Settings next = settings.Copy(); next.AlwaysOnTop = !next.AlwaysOnTop;
-            try { Storage.Save(next); settings = next; TopMost = next.AlwaysOnTop; ((Button)sender).Text = next.AlwaysOnTop ? "已置顶" : "置顶"; }
+            try { Storage.Save(next); settings = next; TopMost = next.AlwaysOnTop; if (pet != null) pet.ApplySettings(settings); ((Button)sender).Text = next.AlwaysOnTop ? "已置顶" : "置顶"; }
             catch (Exception ex) { MessageBox.Show(this, ex.Message, "置顶设置未保存"); }
         });
         ApplySize();
-        timer.Interval = 100; timer.Tick += delegate { if (Visible) Invalidate(); }; timer.Start();
+        timer.Interval = 100; timer.Tick += delegate
+        {
+            if (!Visible) return;
+            Snapshot current = WorkClock.At(settings, DateTime.Now);
+            foreach (Control control in detailBody.Controls) { DetailCard cardControl = control as DetailCard; if (cardControl != null) cardControl.UpdateView(settings, current); }
+            Invalidate();
+        }; timer.Start();
         reminderTimer.Interval = 1000;
         reminderTimer.Tick += delegate
         {
@@ -443,15 +515,94 @@ public sealed class Widget : Form
             }
             else message = reminderClock.Poll(settings, now);
             if (message == null || (reminderPopup != null && !reminderPopup.IsDisposed)) return;
-            ReminderPopup popup = new ReminderPopup(message, settings.Theme, summary); reminderPopup = popup;
-            popup.FormClosed += delegate { popup.Dispose(); if (reminderPopup == popup) reminderPopup = null; };
-            popup.Show();
+            ShowMessage(message, summary);
         };
         reminderTimer.Start();
         MouseDown += delegate(object sender, MouseEventArgs e) { if (e.Button == MouseButtons.Left) { dragging = true; dragOffset = e.Location; Capture = true; } };
         MouseMove += delegate { if (dragging) Location = new Point(Cursor.Position.X - dragOffset.X, Cursor.Position.Y - dragOffset.Y); };
         MouseUp += delegate { if (dragging) { dragging = false; Capture = false; SaveLocation(); } };
-        Shown += delegate { if (!File.Exists(Storage.PathName)) OpenSettings(); };
+        Shown += delegate { if (!File.Exists(Storage.PathName)) OpenSettings(); ApplyPet(); if (settings.PetEnabled) Hide(); };
+    }
+    public void ShowMessage(string message, bool summary)
+    {
+        if (reminderPopup != null) reminderPopup.Close();
+        ReminderPopup popup = new ReminderPopup(message, settings.Theme, summary, settings.PetEnabled ? PetArt.Names[settings.PetCharacter] : null); reminderPopup = popup;
+        if (settings.PetEnabled)
+        {
+            ApplyPet(); pet.Speaking = true; DesktopPet.PlaceBeside(popup, pet.Bounds);
+        }
+        popup.FormClosed += delegate { popup.Dispose(); if (reminderPopup == popup) reminderPopup = null; if (pet != null) pet.Speaking = false; };
+        popup.Show();
+    }
+    private void ToggleDetails()
+    {
+        if (Visible) { Hide(); return; }
+        if (pet != null && pet.Visible) DesktopPet.PlaceBeside(this, pet.Bounds);
+        Show(); Activate();
+    }
+    private void ApplyPet()
+    {
+        if (!settings.PetEnabled)
+        {
+            if (pet != null) { pet.Dispose(); pet = null; }
+            if (!Visible) Show(); return;
+        }
+        if (pet == null || pet.IsDisposed)
+            pet = new DesktopPet(settings, ToggleDetails, delegate(Point point)
+            {
+                settings.PetX = point.X; settings.PetY = point.Y;
+                try { Storage.Save(settings); } catch (Exception ex) { MessageBox.Show(this, ex.Message, "桌宠位置未保存"); }
+            }, ContextMenuStrip);
+        pet.ApplySettings(settings); if (!pet.Visible) pet.Show();
+    }
+    public void SetComponentVisible(string key, bool visible)
+    {
+        if (Array.IndexOf(DetailCard.Keys, key) < 0) return;
+        HashSet<string> selected = new HashSet<string>((settings.DetailVisible ?? "").Split(','));
+        if (visible) selected.Add(key); else selected.Remove(key);
+        List<string> chosen = new List<string>(); foreach (string item in DetailCard.Keys) if (selected.Contains(item)) chosen.Add(item);
+        Settings next = settings.Copy(); next.DetailVisible = string.Join(",", chosen.ToArray());
+        try { Storage.Save(next); settings = next; RebuildComponents(); } catch (Exception ex) { MessageBox.Show(this, ex.Message, "组件配置未保存"); }
+    }
+    public void MoveComponent(string source, string target)
+    {
+        List<string> order = new List<string>(settings.DetailOrder.Split(','));
+        int at = order.IndexOf(target); if (at < 0 || !order.Contains(source) || source == target) return;
+        order.Remove(source); order.Insert(Math.Min(at, order.Count), source);
+        Settings next = settings.Copy(); next.DetailOrder = string.Join(",", order.ToArray());
+        try { Storage.Save(next); settings = next; RebuildComponents(); } catch (Exception ex) { MessageBox.Show(this, ex.Message, "组件顺序未保存"); }
+    }
+    private void RebuildComponents()
+    {
+        if (detailBody == null) return;
+        detailBody.SuspendLayout(); detailBody.AutoScrollMinSize = Size.Empty; detailBody.AutoScroll = false;
+        while (detailBody.Controls.Count > 0) detailBody.Controls[0].Dispose();
+        detailBody.AutoScroll = true;
+        detailBody.AutoScrollPosition = Point.Empty;
+        bool mini = settings.WidgetSize == 1;
+        HashSet<string> selected = new HashSet<string>((settings.DetailVisible ?? "").Split(','));
+        int total = 0; foreach (string key in settings.DetailOrder.Split(',')) if (selected.Contains(key)) total += DetailCard.CardHeight(key, mini) + 6;
+        int width = detailBody.ClientSize.Width - (total > detailBody.ClientSize.Height ? SystemInformation.VerticalScrollBarWidth : 0), y = 0;
+        foreach (string key in settings.DetailOrder.Split(','))
+        {
+            if (!selected.Contains(key)) continue;
+            DetailCard component = new DetailCard(key, settings, MoveComponent, delegate
+            {
+                Point cursor = detailBody.PointToClient(Cursor.Position);
+                int direction = cursor.Y < 24 ? -1 : cursor.Y > detailBody.Height - 24 ? 1 : 0;
+                if (direction != 0) detailBody.AutoScrollPosition = new Point(0, Math.Max(0, -detailBody.AutoScrollPosition.Y + direction * 10));
+            });
+            component.Bounds = new Rectangle(0, y, Math.Max(130, width), DetailCard.CardHeight(key, mini)); detailBody.Controls.Add(component); y += component.Height + 6;
+        }
+        detailBody.AutoScrollMinSize = new Size(0, Math.Max(0, y - 6)); detailBody.ResumeLayout();
+        if (y == 0) detailBody.Controls.Add(new Label { Text = "尚未显示组件\n点击顶部的“组件”勾选要查看的内容", Bounds = new Rectangle(6, 26, detailBody.Width - 12, 100), ForeColor = muted, Font = new Font("Microsoft YaHei UI", 9), TextAlign = ContentAlignment.MiddleCenter });
+        componentMenu.Items.Clear();
+        for (int i = 0; i < DetailCard.Keys.Length; i++)
+        {
+            string key = DetailCard.Keys[i]; ToolStripMenuItem item = new ToolStripMenuItem(DetailCard.Titles[i]) { Checked = selected.Contains(key), CheckOnClick = true };
+            item.Click += delegate { SetComponentVisible(key, item.Checked); }; componentMenu.Items.Add(item);
+        }
+        Invalidate();
     }
     private void AddButton(string text, int x, int y, int width, EventHandler handler)
     {
@@ -466,7 +617,9 @@ public sealed class Widget : Form
         ClientSize = mini ? new Size(260, 300) : new Size(300, 360);
         foreach (Control control in Controls)
         {
+            if (!(control is Button)) continue;
             if (control.Text.Contains("设置")) control.Bounds = new Rectangle(mini ? 184 : 222, mini ? 5 : 7, 66, 24);
+            else if (control.Text == "组件") control.Bounds = new Rectangle(mini ? 128 : 166, mini ? 5 : 7, 50, 24);
             else if (control.Text == "收起") control.Bounds = new Rectangle(mini ? 200 : 222, mini ? 272 : 329, mini ? 48 : 66, 24);
             else if (control.Text.Contains("换主题")) control.Bounds = new Rectangle(mini ? 88 : 101, mini ? 272 : 329, mini ? 88 : 98, 24);
             else control.Bounds = new Rectangle(mini ? 12 : 14, mini ? 272 : 329, mini ? 60 : 66, 24);
@@ -478,10 +631,12 @@ public sealed class Widget : Form
         Rectangle area = Screen.FromRectangle(Bounds).WorkingArea;
         Location = new Point(Math.Max(area.Left, Math.Min(Left, area.Right - Width)), Math.Max(area.Top, Math.Min(Top, area.Bottom - Height)));
         ResumeLayout(); Invalidate();
+        detailBody.Bounds = new Rectangle(12, mini ? 49 : 55, Width - 24, Height - (mini ? 81 : 91)); RebuildComponents();
     }
     private void OpenSettings()
     {
         Show(); TopMost = false;
+        if (pet != null) { pet.Paused = true; pet.Enabled = false; }
         using (SettingsForm form = new SettingsForm(settings))
         {
             form.TopMost = settings.AlwaysOnTop;
@@ -490,6 +645,8 @@ public sealed class Widget : Form
         TopMost = settings.AlwaysOnTop;
         foreach (Control control in Controls) if (control.Text == "已置顶" || control.Text == "置顶") control.Text = TopMost ? "已置顶" : "置顶";
         ApplyTheme();
+        if (pet != null) { pet.Paused = false; pet.Enabled = true; }
+        ApplyPet();
         Invalidate();
     }
     private void ApplyTheme()
@@ -521,7 +678,7 @@ public sealed class Widget : Form
     }
     protected override void Dispose(bool disposing)
     {
-        if (disposing) { timer.Dispose(); reminderTimer.Dispose(); if (reminderPopup != null) reminderPopup.Dispose(); if (tray != null) { tray.Visible = false; tray.Dispose(); } if (appIcon != null) appIcon.Dispose(); }
+        if (disposing) { timer.Dispose(); reminderTimer.Dispose(); if (pet != null) pet.Dispose(); if (componentMenu != null) componentMenu.Dispose(); if (reminderPopup != null) reminderPopup.Dispose(); if (tray != null) { tray.Visible = false; tray.Dispose(); } if (appIcon != null) appIcon.Dispose(); }
         base.Dispose(disposing);
     }
     public static GraphicsPath Rounded(Rectangle rect, int radius)
@@ -530,7 +687,7 @@ public sealed class Widget : Form
         path.AddArc(rect.Left, rect.Top, size, size, 180, 90); path.AddArc(rect.Right - size, rect.Top, size, size, 270, 90);
         path.AddArc(rect.Right - size, rect.Bottom - size, size, size, 0, 90); path.AddArc(rect.Left, rect.Bottom - size, size, size, 90, 90); path.CloseFigure(); return path;
     }
-    private void Write(Graphics g, string text, float size, Color color, RectangleF box, FontStyle style, StringAlignment alignment)
+    public static void Write(Graphics g, string text, float size, Color color, RectangleF box, FontStyle style, StringAlignment alignment)
     {
         using (Font font = new Font("Microsoft YaHei UI", size, style))
         using (SolidBrush brush = new SolidBrush(color))
@@ -539,67 +696,13 @@ public sealed class Widget : Form
     }
     protected override void OnPaint(PaintEventArgs e)
     {
-        base.OnPaint(e); Graphics g = e.Graphics; g.SmoothingMode = SmoothingMode.AntiAlias; g.TextRenderingHint = System.Drawing.Text.TextRenderingHint.ClearTypeGridFit;
-        DateTime now = DateTime.Now; Snapshot value = WorkClock.At(settings, now);
-        bool pink = settings.Theme == 1, mini = Width < 280;
-        double phase = now.TimeOfDay.TotalSeconds;
-        int pad = mini ? 10 : 12;
-        // 紧凑布局重新排布各区域，保留可读字号与真实按钮，避免整窗缩放导致文字模糊。
+        base.OnPaint(e); Graphics g = e.Graphics; g.SmoothingMode = SmoothingMode.AntiAlias;
+        bool mini = Width < 280;
         using (LinearGradientBrush wash = new LinearGradientBrush(ClientRectangle, background, card, 62f)) g.FillRectangle(wash, ClientRectangle);
-        if (!pink) using (Pen grid = new Pen(Color.FromArgb(14, accent)))
-        {
-            for (int x = 8; x < Width; x += 24) g.DrawLine(grid, x, 0, x, Height);
-            for (int y = 8; y < Height; y += 24) g.DrawLine(grid, 0, y, Width, y);
-        }
-        for (int i = 0; i < 8; i++)
-        {
-            float x = 14 + (i * 83 % (Width - 28)), y = 45 + (i * 59 % (Height - 70)) + (float)Math.Sin(phase * .8 + i) * 3;
-            using (Pen star = new Pen(Color.FromArgb((int)(45 + 17 * (1 + Math.Sin(phase * 1.2 + i))), secondary)))
-            { g.DrawLine(star, x - 2, y, x + 2, y); g.DrawLine(star, x, y - 2, x, y + 2); }
-        }
-        using (Pen border = new Pen(Color.FromArgb(85, secondary))) using (GraphicsPath path = Rounded(new Rectangle(0, 0, Width - 1, Height - 1), 22)) g.DrawPath(border, path);
+        using (Pen border = new Pen(Color.FromArgb(90, secondary))) using (GraphicsPath path = Rounded(new Rectangle(0, 0, Width - 1, Height - 1), 22)) g.DrawPath(border, path);
         using (SolidBrush logo = new SolidBrush(accent)) g.FillEllipse(logo, mini ? 12 : 14, mini ? 17 : 19, 8, 8);
-        Write(g, "上班鼓励器", mini ? 9.5f : 10, ink, new RectangleF(mini ? 27 : 30, mini ? 5 : 7, 175, 27), FontStyle.Bold, StringAlignment.Near);
-        Write(g, pink ? "STARLIGHT / 樱粉星光" : "NEON SHIFT / 霓虹科技", mini ? 7 : 7.5f, accent, new RectangleF(pad + 2, mini ? 31 : 39, Width - 25, 18), FontStyle.Bold, StringAlignment.Near);
-        Rectangle panel = new Rectangle(pad, mini ? 53 : 64, Width - pad * 2, mini ? 83 : 102);
-        using (GraphicsPath path = Rounded(panel, 14))
-        using (LinearGradientBrush brush = new LinearGradientBrush(panel, pink ? Color.FromArgb(255, 253, 255) : Color.FromArgb(27, 47, 75), pink ? Color.FromArgb(248, 219, 241) : Color.FromArgb(39, 31, 74), 25f))
-        using (Pen outline = new Pen(Color.FromArgb(65, accent))) { g.FillPath(brush, path); g.DrawPath(outline, path); }
-        Write(g, "今日收入", mini ? 8 : 8.5f, muted, new RectangleF(pad + 12, panel.Y + 6, 140, 21), FontStyle.Regular, StringAlignment.Near);
-        Write(g, "时间折算 · 估算", 7, muted, new RectangleF(Width - 108, panel.Y + 7, 84, 19), FontStyle.Regular, StringAlignment.Far);
-        float amountSize = value.Earned >= 1000000 ? (mini ? 14 : 17) : value.Earned >= 100000 ? (mini ? 18 : 21) : (mini ? 24 : 28);
-        Write(g, settings.MonthlySalary == 0 ? "¥ —" : "¥ " + value.Earned.ToString("N2"), amountSize, ink, new RectangleF(pad + 8, mini ? 80 : 96, Width - 76, mini ? 37 : 43), FontStyle.Bold, StringAlignment.Near);
-        int coinSize = mini ? 27 : 32, coinX = Width - pad - coinSize - 8;
-        float coinY = (mini ? 88 : 106) + (float)Math.Sin(phase * 1.4) * 2;
-        using (SolidBrush shadow = new SolidBrush(Color.FromArgb(24, secondary))) g.FillEllipse(shadow, coinX, coinY + coinSize + 2, coinSize, 5);
-        using (LinearGradientBrush gold = new LinearGradientBrush(new Rectangle(coinX, (int)coinY, coinSize, coinSize), pink ? Color.FromArgb(255, 222, 158) : accent, secondary, 50f)) g.FillEllipse(gold, coinX, coinY, coinSize, coinSize);
-        using (Pen coin = new Pen(Color.FromArgb(160, Color.White))) g.DrawEllipse(coin, coinX + 3, coinY + 3, coinSize - 6, coinSize - 6);
-        Write(g, "¥", mini ? 12 : 14, pink ? Color.FromArgb(133, 77, 110) : Color.FromArgb(15, 37, 66), new RectangleF(coinX, coinY, coinSize, coinSize), FontStyle.Bold, StringAlignment.Center);
-        Write(g, settings.MonthlySalary == 0 ? "设置薪资后显示每秒收入" : "每秒收入 ¥ " + value.PerSecond.ToString(value.PerSecond >= 0.0001m ? "0.0000" : "0.0000########"), mini ? 7.5f : 8, accent, new RectangleF(pad + 12, mini ? 118 : 141, Width - 40, 19), FontStyle.Regular, StringAlignment.Near);
-        int rx = mini ? 20 : 24, ry = mini ? 154 : 187, diameter = mini ? 66 : 82;
-        Rectangle ring = new Rectangle(rx, ry, diameter, diameter);
-        using (Pen track = new Pen(Color.FromArgb(30, secondary), mini ? 6 : 7)) g.DrawEllipse(track, ring);
-        using (Pen glow = new Pen(Color.FromArgb(35, accent), mini ? 12 : 14)) if (value.Progress > 0) g.DrawArc(glow, ring, -90, (float)value.Progress * 360);
-        using (LinearGradientBrush gradient = new LinearGradientBrush(ring, accent, secondary, 70f))
-        using (Pen progress = new Pen(gradient, mini ? 6 : 7))
-        {
-            progress.StartCap = progress.EndCap = LineCap.Round;
-            if (value.Progress > 0) g.DrawArc(progress, ring, -90, (float)value.Progress * 360);
-        }
-        using (Pen orbit = new Pen(Color.FromArgb(150, secondary), 1.5f)) g.DrawArc(orbit, new Rectangle(rx - 8, ry - 8, diameter + 16, diameter + 16), (float)(phase * 16 % 360), 34);
-        Write(g, value.Progress.ToString("P1"), mini ? 14 : 17, ink, new RectangleF(rx - 6, mini ? 169 : 208, diameter + 12, 30), FontStyle.Bold, StringAlignment.Center);
-        Write(g, "今日进度", mini ? 7 : 7.5f, muted, new RectangleF(rx - 6, mini ? 195 : 239, diameter + 12, 18), FontStyle.Regular, StringAlignment.Center);
-        int right = mini ? 105 : 127;
-        Write(g, value.Status, mini ? 8 : 8.5f, accent, new RectangleF(right, mini ? 145 : 182, Width - right - 12, 22), FontStyle.Bold, StringAlignment.Near);
-        Write(g, "剩余有效工时", mini ? 7 : 7.5f, muted, new RectangleF(right, mini ? 168 : 210, Width - right - 12, 18), FontStyle.Regular, StringAlignment.Near);
-        string duration = !value.WorkingDay ? "休息日" : string.Format("{0:00}:{1:00}:{2:00}", (int)(value.Remaining / 3600), (int)(value.Remaining / 60) % 60, (int)value.Remaining % 60);
-        Write(g, duration, mini ? 17 : 19, ink, new RectangleF(right - 2, mini ? 186 : 231, Width - right - 10, 31), FontStyle.Bold, StringAlignment.Near);
-        Write(g, settings.Start + " — " + settings.End, mini ? 7.5f : 8, muted, new RectangleF(right, mini ? 211 : 266, Width - right - 12, 19), FontStyle.Regular, StringAlignment.Near);
-        int quoteY = mini ? 232 : 285;
-        using (GraphicsPath quote = Rounded(new Rectangle(pad, quoteY, Width - pad * 2, mini ? 23 : 29), 9)) using (SolidBrush brush = new SolidBrush(Color.FromArgb(pink ? 155 : 115, background))) g.FillPath(brush, quote);
-        Write(g, pink ? "✧" : "✦", 11, secondary, new RectangleF(pad + 3, quoteY, 19, mini ? 23 : 29), FontStyle.Regular, StringAlignment.Center);
-        Write(g, phrases[(now.DayOfYear + now.Hour / 2) % phrases.Length], mini ? 7 : 7.5f, ink, new RectangleF(pad + 24, quoteY, Width - pad * 2 - 27, mini ? 23 : 29), FontStyle.Regular, StringAlignment.Near);
-        Write(g, now.ToString("M月d日 dddd", CultureInfo.GetCultureInfo("zh-CN")) + " · 本月 " + value.MonthDays + " 个工作日", mini ? 7 : 7.5f, muted, new RectangleF(pad + 2, mini ? 255 : 310, Width - pad * 2 - 4, 18), FontStyle.Regular, StringAlignment.Center);
+        Write(g, "上班鼓励器", mini ? 9.5f : 10, ink, new RectangleF(mini ? 27 : 30, mini ? 5 : 7, 125, 27), FontStyle.Bold, StringAlignment.Near);
+        Write(g, "拖动组件排序 · 可滚动查看", 7, muted, new RectangleF(14, mini ? 31 : 36, Width - 28, 17), FontStyle.Regular, StringAlignment.Near);
     }
 }
 
@@ -615,9 +718,30 @@ public static class Program
         }
         if (args.Length > 0 && args[0] == "--preview")
         {
+            using (Bitmap sheet = new Bitmap(PetArt.Names.Length * 200, 460))
+            using (Graphics g = Graphics.FromImage(sheet))
+            {
+                g.Clear(Color.FromArgb(246, 247, 252));
+                for (int theme = 0; theme < 2; theme++) for (int character = 0; character < PetArt.Names.Length; character++)
+                {
+                    using (Bitmap pet = PetArt.Render(character, theme, 16, false, false))
+                    {
+                        pet.Save(Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "pet-" + character + "-" + theme + ".png"));
+                        g.DrawImage(pet, character * 200, theme * 230);
+                    }
+                    Widget.Write(g, PetArt.Names[character], 10, Color.FromArgb(64, 69, 88), new RectangleF(character * 200, theme * 230 + 190, 200, 25), FontStyle.Bold, StringAlignment.Center);
+                }
+                sheet.Save(Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "pets-preview.png"));
+            }
+            using (ReminderPopup preview = new ReminderPopup("喝点水；如有需要，起身去趟洗手间。", 0, false, "猫咪"))
+            using (Bitmap bitmap = new Bitmap(preview.Width, preview.Height))
+            {
+                preview.Opacity = 0; preview.Show(); Application.DoEvents(); preview.DrawToBitmap(bitmap, preview.ClientRectangle); preview.Hide();
+                bitmap.Save(Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "pet-bubble.png"));
+            }
             for (int theme = 0; theme < 2; theme++)
             for (int size = 0; size < 2; size++)
-                using (Widget preview = new Widget(new Settings { MonthlySalary = 8800, Theme = theme, WidgetSize = size, DailySummaryEnabled = false }))
+                using (Widget preview = new Widget(new Settings { MonthlySalary = 8800, Theme = theme, WidgetSize = size, DailySummaryEnabled = false, PetEnabled = false }))
                 using (Bitmap bitmap = new Bitmap(preview.Width, preview.Height))
                 {
                     preview.Opacity = 0; preview.Show(); Application.DoEvents(); preview.DrawToBitmap(bitmap, preview.ClientRectangle); preview.Hide();
@@ -667,6 +791,7 @@ public static class Program
 
 public static class Tests
 {
+    [DllImport("user32.dll")] private static extern IntPtr GetForegroundWindow();
     public static void Run()
     {
         StringBuilder report = new StringBuilder(); int checks = 0;
@@ -677,7 +802,7 @@ public static class Tests
         };
         try
         {
-            Settings s = new Settings { MonthlySalary = 8800, ManualDays = true, Days = 22, ManualMonth = "2026-11", DailySummaryEnabled = false };
+            Settings s = new Settings { MonthlySalary = 8800, ManualDays = true, Days = 22, ManualMonth = "2026-11", DailySummaryEnabled = false, PetEnabled = false };
             s.Validate();
             Snapshot v = WorkClock.At(s, new DateTime(2026, 11, 2, 8, 0, 0));
             check(v.Progress == 0 && v.Earned == 0, "Before work stays at zero");
@@ -783,6 +908,23 @@ public static class Tests
                 check(Storage.Load().WaterIntervalMinutes == 17 && Storage.Load().RestroomIntervalMinutes == 53, "Custom intervals save through actual settings dialog and survive size changes");
                 using (Widget restarted = new Widget(Storage.Load()))
                     check(restarted.ClientSize == new Size(300, 360), "Saved size applies on restart");
+                Panel body = (Panel)themed.Controls["DetailBody"];
+                check(body.Controls["Detail_income"] is DetailCard && body.Controls["Detail_rate"] is DetailCard, "Detail panel exposes separate income and rate components");
+                themed.SetComponentVisible("rate", false);
+                check(body.Controls["Detail_rate"] == null && !Storage.Load().DetailVisible.Contains("rate"), "Hiding a component updates view and saved settings");
+                DetailCard dropTarget = (DetailCard)body.Controls["Detail_countdown"];
+                DataObject drag = new DataObject(DataFormats.Text, "WorkEncouragerCard:income");
+                System.Reflection.MethodInfo drop = typeof(Control).GetMethod("OnDragDrop", System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic);
+                drop.Invoke(dropTarget, new object[] { new DragEventArgs(drag, 0, 0, 0, DragDropEffects.Move, DragDropEffects.Move) });
+                Application.DoEvents();
+                check(Storage.Load().DetailOrder.IndexOf("income") > Storage.Load().DetailOrder.IndexOf("countdown"), "Drag payload moves component through real drop event and persists order");
+                using (Widget restored = new Widget(Storage.Load()))
+                    check(((Panel)restored.Controls["DetailBody"]).Controls["Detail_rate"] == null, "Component visibility survives restarting detail panel");
+                foreach (string key in DetailCard.Keys) themed.SetComponentVisible(key, false);
+                bool recover = false; foreach (Control control in themed.Controls) if (control.Text == "组件") recover = true;
+                check(body.Controls.Count == 1 && body.Controls[0] is Label && recover, "Hiding all components retains an explanation and configuration entry");
+                foreach (string key in DetailCard.Keys) themed.SetComponentVisible(key, true);
+                check(body.Controls.Count == DetailCard.Keys.Length && Storage.Load().MonthlySalary == s.MonthlySalary, "Components can be restored without changing salary");
                 themed.Hide();
             }
             using (StringReader legacy = new StringReader("<Settings><MonthlySalary>8800</MonthlySalary></Settings>"))
@@ -792,6 +934,37 @@ public static class Tests
                 dialog.CreateControl();
                 check(dialog.Controls.Count > 20, "Settings window builds all fields");
             }
+            using (StringReader legacy = new StringReader("<Settings><MonthlySalary>8800</MonthlySalary></Settings>"))
+            {
+                Settings old = (Settings)new XmlSerializer(typeof(Settings)).Deserialize(legacy); old.Validate();
+                check(old.PetEnabled && old.PetCharacter == 0 && old.DetailOrder.Split(',').Length == 5, "Legacy configuration enables default pet and all detail components");
+            }
+            Settings petSettings = new Settings { PetCharacter = 3, PetX = 100, PetY = 200, PetWalk = true, DailySummaryEnabled = false };
+            Storage.Save(petSettings);
+            check(Storage.Load().PetCharacter == 3 && Storage.Load().PetX == 100 && Storage.Load().PetY == 200 && Storage.Load().PetWalk, "Pet character, position and walking option persist");
+            for (int character = 0; character < PetArt.Names.Length; character++)
+            using (Bitmap petImage = PetArt.Render(character, 0, 10, false, false))
+            {
+                check(petImage.GetPixel(0, 0).A == 0 && petImage.GetPixel(100, 100).A > 0, "Pet silhouette has transparent surroundings and opaque body: " + character);
+            }
+            using (ContextMenuStrip menu = new ContextMenuStrip())
+            using (DesktopPet desktop = new DesktopPet(petSettings, delegate { }, delegate(Point position) { }, menu))
+            {
+                petSettings.PetWalk = false;
+                IntPtr focused = GetForegroundWindow(); desktop.Show(); Application.DoEvents();
+                check(desktop.Visible && desktop.IsHandleCreated, "Native alpha-composited pet window renders successfully");
+                check(GetForegroundWindow() == focused, "Showing desktop pet does not steal keyboard focus");
+                for (int character = 0; character < PetArt.Names.Length; character++) { petSettings.PetCharacter = character; desktop.ApplySettings(petSettings); }
+                check(desktop.Visible && desktop.ClientSize == new Size(200, 190), "All characters switch in the same small native window");
+                using (ReminderPopup bubble = new ReminderPopup("喝水时间到了", 0, false, "猫咪"))
+                {
+                    DesktopPet.PlaceBeside(bubble, desktop.Bounds);
+                    check(Screen.FromRectangle(desktop.Bounds).WorkingArea.Contains(bubble.Bounds), "Pet speech bubble stays within screen working area");
+                }
+                desktop.Hide();
+            }
+            invalid = s.Copy(); invalid.DetailOrder = "income,income,progress,countdown,encouragement"; rejected = false;
+            try { invalid.Validate(); } catch { rejected = true; } check(rejected, "Duplicate component order is rejected");
             Settings remind = new Settings { RemindersEnabled = true };
             DateTime morning = new DateTime(2026, 11, 2, 9, 0, 0);
             ReminderClock clock = new ReminderClock(morning);
