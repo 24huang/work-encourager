@@ -132,7 +132,10 @@ public sealed class DesktopPet : Form
         Rectangle area = Screen.FromRectangle(petBounds).WorkingArea;
         int x = petBounds.Left - window.Width + 22;
         if (x < area.Left) x = petBounds.Right - 22;
-        window.Location = new Point(Math.Max(area.Left, Math.Min(x, area.Right - window.Width)), Math.Max(area.Top, Math.Min(petBounds.Top - 30, area.Bottom - window.Height)));
+        ReminderPopup bubble = window as ReminderPopup;
+        int y = bubble == null ? petBounds.Top - 30 : petBounds.Top + petBounds.Height / 3 - window.Height / 2;
+        window.Location = new Point(Math.Max(area.Left, Math.Min(x, area.Right - window.Width)), Math.Max(area.Top, Math.Min(y, area.Bottom - window.Height)));
+        if (bubble != null) bubble.AimAtPet(petBounds);
     }
     protected override void Dispose(bool disposing) { if (disposing) timer.Dispose(); base.Dispose(disposing); }
 }

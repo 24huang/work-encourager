@@ -344,66 +344,67 @@ public sealed class SettingsForm : Form
 public sealed class ReminderPopup : Form
 {
     private readonly System.Windows.Forms.Timer dismiss = new System.Windows.Forms.Timer();
-    private readonly Color accent;
-    private readonly bool summary;
-    private readonly string speaker;
-    private readonly int petTheme;
+    private readonly ToolTip hint = new ToolTip();
+    private readonly Button messageButton;
+    private readonly int bodyWidth;
+    private bool tailLeft;
     public ReminderPopup(string message, int theme, bool dailySummary = false, string petSpeaker = null)
     {
-        summary = dailySummary;
-        speaker = petSpeaker; petTheme = theme;
-        bool pink = theme == 1;
-        Text = summary ? "下班总结 · 上班鼓励器" : "休息提醒 · 上班鼓励器"; ClientSize = new Size(350, 177);
+        Text = dailySummary ? "下班总结 · 上班鼓励器" : "休息提醒 · 上班鼓励器";
         AutoScaleMode = AutoScaleMode.None; FormBorderStyle = FormBorderStyle.None;
         StartPosition = FormStartPosition.Manual; ShowInTaskbar = false; TopMost = true;
-        BackColor = pink ? Color.FromArgb(253, 239, 250) : Color.FromArgb(20, 30, 53);
-        ForeColor = pink ? Color.FromArgb(83, 46, 89) : Color.FromArgb(234, 243, 255);
-        accent = pink ? Color.FromArgb(174, 67, 139) : Color.FromArgb(94, 224, 255);
+        BackColor = Color.FromArgb(149, 236, 105); ForeColor = Color.FromArgb(22, 37, 17);
         Font = new Font("Microsoft YaHei UI", 10); DoubleBuffered = true;
+        TextFormatFlags flags = TextFormatFlags.WordBreak | TextFormatFlags.NoPadding | TextFormatFlags.NoPrefix;
+        int lineWidth = Math.Min(220, Math.Max(52, TextRenderer.MeasureText(message, Font, Size.Empty, TextFormatFlags.SingleLine | TextFormatFlags.NoPadding | TextFormatFlags.NoPrefix).Width));
+        Size measured = TextRenderer.MeasureText(message, Font, new Size(lineWidth, 1000), flags);
+        bodyWidth = Math.Max(76, measured.Width + 24);
+        ClientSize = new Size(bodyWidth + 9, Math.Max(34, measured.Height + 18));
+        messageButton = new Button { Text = "", AccessibleName = (petSpeaker == null ? "" : petSpeaker + "：") + message, FlatStyle = FlatStyle.Flat, BackColor = BackColor, ForeColor = ForeColor, Cursor = Cursors.Hand, TabStop = false };
+        messageButton.FlatAppearance.BorderSize = 0;
+        messageButton.FlatAppearance.MouseOverBackColor = BackColor;
+        messageButton.FlatAppearance.MouseDownBackColor = Color.FromArgb(136, 222, 94);
+        messageButton.Paint += delegate(object sender, PaintEventArgs e)
+        {
+            TextRenderer.DrawText(e.Graphics, message, Font, new Rectangle(10, 3, messageButton.Width - 20, messageButton.Height - 6), ForeColor, flags | TextFormatFlags.VerticalCenter);
+        };
+        messageButton.Click += delegate { Close(); }; Controls.Add(messageButton);
+        hint.SetToolTip(messageButton, "点击气泡关闭；15秒后自动收起");
+        Click += delegate { Close(); };
+        UpdateBubble();
         Rectangle area = Screen.FromPoint(Cursor.Position).WorkingArea;
         Location = new Point(area.Right - Width - 20, area.Bottom - Height - 20);
-        using (GraphicsPath path = Widget.Rounded(ClientRectangle, 18)) Region = new Region(path);
-        Controls.Add(new Label { Text = speaker != null ? speaker + (summary ? "：下班啦！" : "提醒你") : summary ? "下班啦，今天辛苦了！" : "该给自己一点休息时间了", Font = new Font(Font.FontFamily, 11, FontStyle.Bold), Bounds = new Rectangle(72, 24, 260, 27), ForeColor = ForeColor });
-        Controls.Add(new Label { Text = message, Bounds = new Rectangle(72, 61, 258, 47), ForeColor = ForeColor });
-        Button close = new Button { Text = "知道了", Bounds = new Rectangle(232, 126, 96, 31), FlatStyle = FlatStyle.Flat, BackColor = BackColor, ForeColor = accent, Cursor = Cursors.Hand };
-        close.FlatAppearance.BorderColor = accent; close.Click += delegate { Close(); }; Controls.Add(close);
-        Controls.Add(new Label { Text = "15 秒后自动关闭", Bounds = new Rectangle(22, 132, 180, 25), ForeColor = accent, Font = new Font(Font.FontFamily, 8) });
         dismiss.Interval = 15000; dismiss.Tick += delegate { Close(); };
         Shown += delegate { dismiss.Start(); };
     }
-    // 提醒可见，但不抢走当前输入焦点，也不阻塞主窗口。
+    // 尖角随桌宠所在侧翻转；窗口区域只包含气泡，尖角周围可透过桌面。
+    public void AimAtPet(Rectangle petBounds)
+    {
+        bool next = Left + Width / 2 > petBounds.Left + petBounds.Width / 2;
+        if (next != tailLeft) { tailLeft = next; UpdateBubble(); }
+    }
+    private void UpdateBubble()
+    {
+        int x = tailLeft ? 8 : 0, middle = Height / 2;
+        using (GraphicsPath shape = Widget.Rounded(new Rectangle(x, 0, bodyWidth, Height), 6))
+        {
+            shape.FillMode = FillMode.Winding;
+            shape.AddPolygon(tailLeft ? new[] { new Point(9, middle + 6), new Point(0, middle), new Point(9, middle - 6) } : new[] { new Point(bodyWidth - 1, middle - 6), new Point(Width - 1, middle), new Point(bodyWidth - 1, middle + 6) });
+            Region previous = Region; Region = new Region(shape); if (previous != null) previous.Dispose();
+        }
+        messageButton.Bounds = new Rectangle(x + 2, 2, bodyWidth - 4, Height - 4); Invalidate();
+    }
     protected override bool ShowWithoutActivation { get { return true; } }
     protected override CreateParams CreateParams
     {
         get { CreateParams value = base.CreateParams; value.ExStyle |= 0x08000000; return value; }
     }
-    protected override void OnPaint(PaintEventArgs e)
-    {
-        base.OnPaint(e); Graphics g = e.Graphics; g.SmoothingMode = SmoothingMode.AntiAlias;
-        using (Pen pen = new Pen(accent, 2))
-        {
-            using (GraphicsPath path = Widget.Rounded(new Rectangle(0, 0, Width - 1, Height - 1), 18)) g.DrawPath(pen, path);
-            if (speaker != null)
-            {
-                using (Bitmap avatar = PetArt.Render(Math.Max(0, Array.IndexOf(PetArt.Names, speaker)), petTheme, 0, false, true)) g.DrawImage(avatar, new Rectangle(7, 14, 68, 65));
-            }
-            else if (summary)
-            {
-                g.DrawEllipse(pen, 25, 36, 33, 33);
-                TextRenderer.DrawText(g, "¥", Font, new Rectangle(25, 36, 33, 33), accent, TextFormatFlags.HorizontalCenter | TextFormatFlags.VerticalCenter);
-            }
-            else
-            {
-                g.DrawLine(pen, 26, 38, 30, 68); g.DrawLine(pen, 30, 68, 49, 68); g.DrawLine(pen, 49, 68, 53, 38); g.DrawLine(pen, 26, 38, 53, 38);
-                g.DrawArc(pen, 46, 43, 15, 17, -90, 180); g.DrawLine(pen, 31, 51, 48, 51);
-            }
-        }
-    }
     protected override void Dispose(bool disposing)
     {
-        if (disposing) dismiss.Dispose(); base.Dispose(disposing);
+        if (disposing) { dismiss.Dispose(); hint.Dispose(); } base.Dispose(disposing);
     }
 }
+
 
 public sealed class Widget : Form
 {
@@ -518,6 +519,7 @@ public sealed class Widget : Form
         ApplySize();
         timer.Interval = 100; timer.Tick += delegate
         {
+            if (reminderPopup != null && !reminderPopup.IsDisposed && pet != null && pet.Visible) DesktopPet.PlaceBeside(reminderPopup, pet.Bounds);
             if (!Visible) return;
             Snapshot current = WorkClock.At(settings, DateTime.Now);
             foreach (Control control in detailBody.Controls) { DetailCard cardControl = control as DetailCard; if (cardControl != null) cardControl.UpdateView(settings, current); }
@@ -736,6 +738,17 @@ public sealed class Widget : Form
 
 public static class Program
 {
+    private static void ApplyWindowRegion(Form form, Bitmap image)
+    {
+        if (form.Region == null) return;
+        using (Graphics g = Graphics.FromImage(image))
+        using (SolidBrush transparent = new SolidBrush(Color.Transparent))
+        {
+            g.CompositingMode = CompositingMode.SourceCopy;
+            g.SetClip(form.Region, CombineMode.Exclude);
+            g.FillRectangle(transparent, 0, 0, image.Width, image.Height);
+        }
+    }
     [STAThread]
     public static void Main(string[] args)
     {
@@ -787,6 +800,7 @@ public static class Program
             using (Bitmap bitmap = new Bitmap(preview.Width, preview.Height))
             {
                 preview.Opacity = 0; preview.Show(); Application.DoEvents(); preview.DrawToBitmap(bitmap, preview.ClientRectangle); preview.Hide();
+                ApplyWindowRegion(preview, bitmap);
                 bitmap.Save(Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "pet-bubble.png"));
             }
             for (int theme = 0; theme < 2; theme++)
@@ -802,6 +816,7 @@ public static class Program
                 using (Bitmap bitmap = new Bitmap(preview.Width, preview.Height))
                 {
                     preview.Opacity = 0; preview.Show(); Application.DoEvents(); preview.DrawToBitmap(bitmap, preview.ClientRectangle); preview.Hide();
+                    ApplyWindowRegion(preview, bitmap);
                     bitmap.Save(Path.Combine(AppDomain.CurrentDomain.BaseDirectory, theme == 0 ? "reminder-neon.png" : "reminder-starlight.png"));
                 }
             for (int theme = 0; theme < 2; theme++)
@@ -809,6 +824,7 @@ public static class Program
                 using (Bitmap bitmap = new Bitmap(preview.Width, preview.Height))
                 {
                     preview.Opacity = 0; preview.Show(); Application.DoEvents(); preview.DrawToBitmap(bitmap, preview.ClientRectangle); preview.Hide();
+                    ApplyWindowRegion(preview, bitmap);
                     bitmap.Save(Path.Combine(AppDomain.CurrentDomain.BaseDirectory, theme == 0 ? "summary-neon.png" : "summary-starlight.png"));
                 }
             using (SettingsForm preview = new SettingsForm(new Settings { MonthlySalary = 8800 }))
