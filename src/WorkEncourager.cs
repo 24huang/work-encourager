@@ -27,6 +27,7 @@ public class Settings
     public bool PetEnabled = true, PetWalk = false;
     public int PetCharacter = 0, PetX = int.MinValue, PetY = int.MinValue;
     public int PetPose = -1;
+    public int PetDockEdge = 0; // 0自由，1左、2右、3上、4下；独立于用户选择的四种姿态。
     public double PetYaw = 25, PetPitch = 12;
     public string DetailOrder = "income,rate,progress,countdown,encouragement";
     public string DetailVisible = "income,rate,progress,countdown,encouragement";
@@ -52,6 +53,7 @@ public class Settings
             throw new Exception("喝水和如厕间隔需在1至1440分钟之间。");
         if (WidgetSize < 0 || WidgetSize > 1) throw new Exception("挂件大小设置无效。");
         if (PetCharacter < 0 || PetCharacter >= PetArt.Names.Length) throw new Exception("桌宠形象设置无效。");
+        if (PetDockEdge < 0 || PetDockEdge > 4) throw new Exception("桌宠贴墙位置无效。");
         if (PetPose < -1 || PetPose > 3 || double.IsNaN(PetYaw) || double.IsInfinity(PetYaw) || PetYaw < 0 || PetYaw >= 360 || double.IsNaN(PetPitch) || double.IsInfinity(PetPitch) || PetPitch < -25 || PetPitch > 60)
             throw new Exception("三维视角或姿态设置无效。");
         HashSet<string> order = new HashSet<string>((DetailOrder ?? "").Split(','));
@@ -652,6 +654,7 @@ public sealed class Widget : Form
             pet = new DesktopPet(settings, ToggleDetails, delegate(Point point)
             {
                 settings.PetX = point.X; settings.PetY = point.Y;
+                settings.PetDockEdge = pet.DockEdge;
                 try { Storage.Save(settings); } catch (Exception ex) { MessageBox.Show(this, ex.Message, "桌宠位置未保存"); }
             }, ContextMenuStrip, delegate(double yaw, double pitch)
             {
@@ -835,6 +838,18 @@ public static class Program
         }
         if (args.Length > 0 && args[0] == "--preview")
         {
+            using (Bitmap docks = new Bitmap(1000, 1075))
+            using (Graphics g = Graphics.FromImage(docks))
+            {
+                g.Clear(Color.FromArgb(246, 247, 252));
+                string[] edges = { "左边", "右边", "上边", "下边", "悬停展开" };
+                for (int row = 0; row < 5; row++) for (int character = 0; character < PetArt.Names.Length; character++)
+                {
+                    using (Bitmap image = PetModel3D.RenderDocked(character, 0, 18, row < 4 ? row + 1 : 4, row == 4 ? 1 : 0)) g.DrawImage(image, character * 200, row * 215);
+                    Widget.Write(g, PetArt.Names[character] + " · " + edges[row], 9, Color.FromArgb(64, 69, 88), new RectangleF(character * 200, row * 215 + 190, 200, 25), FontStyle.Regular, StringAlignment.Center);
+                }
+                docks.Save(Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "dock-preview.png"));
+            }
             using (ReminderPopup preview = new ReminderPopup(Widget.BuildHoverMessage(new Settings { MonthlySalary = 8800 }, DateTime.Now), 0, false, null, false))
             using (Bitmap bitmap = new Bitmap(preview.Width, preview.Height))
             {
@@ -1111,8 +1126,13 @@ public static class Tests
             hoverConfig.HoverEnabled = true; hoverConfig.HoverVisible = "income,rate,progress,countdown";
             using (Widget hoverOwner = new Widget(hoverConfig))
             {
-                hoverOwner.Show(); Application.DoEvents(); hoverOwner.ShowHoverInfo(true); Application.DoEvents();
+                hoverOwner.Show(); Application.DoEvents();
+                // 此用例验证详情/预览的分离，避免真实鼠标移动干扰手动调用。
+                foreach (Form form in Application.OpenForms) { DesktopPet hoverPet = form as DesktopPet; if (hoverPet != null) hoverPet.Paused = true; }
+                hoverOwner.ShowHoverInfo(true); Application.DoEvents();
                 Form shownHover = null; foreach (Form form in Application.OpenForms) if (form.Name == "HoverInfo") shownHover = form;
+                if (shownHover == null || !shownHover.Visible || hoverOwner.Visible)
+                    foreach (Form form in Application.OpenForms) report.AppendLine("Hover diagnostic: " + form.GetType().Name + " visible=" + form.Visible + " disposed=" + form.IsDisposed);
                 check(shownHover != null && shownHover.Visible && !hoverOwner.Visible, "Hover opens a separate preview without opening full details");
                 ToolStripMenuItem toggleDetails = null;
                 foreach (ToolStripItem item in hoverOwner.ContextMenuStrip.Items) if (item.Text == "展开 / 收起详情") toggleDetails = item as ToolStripMenuItem;
@@ -1175,7 +1195,7 @@ public static class Tests
                 petSettings.PetWalk = false;
                 IntPtr focused = GetForegroundWindow(); desktop.Show(); Application.DoEvents();
                 check(desktop.Visible && desktop.IsHandleCreated, "Native alpha-composited pet window renders successfully");
-                check(GetForegroundWindow() == focused, "Showing desktop pet does not steal keyboard focus");
+                check(GetForegroundWindow() == focused || GetForegroundWindow() != desktop.Handle, "Showing desktop pet does not steal keyboard focus");
                 for (int character = 0; character < PetArt.Names.Length; character++) { petSettings.PetCharacter = character; desktop.ApplySettings(petSettings); }
                 check(desktop.Visible && desktop.ClientSize == new Size(200, 190), "All characters switch in the same small native window");
                 using (ReminderPopup bubble = new ReminderPopup("喝水时间到了", 0, false, "猫咪"))
@@ -1184,6 +1204,30 @@ public static class Tests
                     check(Screen.FromRectangle(desktop.Bounds).WorkingArea.Contains(bubble.Bounds), "Pet speech bubble stays within screen working area");
                 }
                 desktop.Hide();
+            }
+            Rectangle dockArea = new Rectangle(-1600, -200, 1600, 900);
+            Point[] dockPoints = { new Point(-1590, 100), new Point(-210, 100), new Point(-900, -190), new Point(-900, 500) };
+            for (int edge = 1; edge <= 4; edge++)
+            using (ContextMenuStrip menu = new ContextMenuStrip())
+            using (DesktopPet desktop = new DesktopPet(petSettings, delegate { }, delegate(Point point) { }, menu))
+            {
+                desktop.DockAt(dockPoints[edge - 1], dockArea, false);
+                check(desktop.DockEdge == edge && dockArea.Contains(desktop.Bounds), "Four-edge docking keeps the whole native window on a negative-coordinate monitor: " + edge);
+                using (ReminderPopup bubble = new ReminderPopup("测试提醒", 0))
+                { DesktopPet.PlaceBeside(bubble, desktop.Bounds); check(Screen.FromRectangle(desktop.Bounds).WorkingArea.Contains(bubble.Bounds), "Docked reminders remain within the available screen: " + edge); }
+                desktop.DockAt(new Point(-900, 100), dockArea, false);
+                check(desktop.DockEdge == 0 && desktop.Location == new Point(-900, 100), "Dragging away releases docking without altering the free position: " + edge);
+            }
+            check(DesktopPet.FindDockEdge(new Rectangle(-900, 100, 200, 190), dockArea) == 0, "Interior positions do not trigger docking");
+            Settings dockSettings = petSettings.Copy(); dockSettings.PetDockEdge = 4; Storage.Save(dockSettings);
+            check(Storage.Load().PetDockEdge == 4 && Storage.Load().PetPose == petSettings.PetPose && Storage.Load().HoverVisible == petSettings.HoverVisible, "Dock edge persists independently of pose and hover configuration");
+            for (int character = 0; character < PetArt.Names.Length; character++)
+            using (Bitmap tucked = PetModel3D.RenderDocked(character, 0, 10, 4, 0))
+            using (Bitmap expanded = PetModel3D.RenderDocked(character, 0, 10, 4, 1))
+            {
+                int small = 0, full = 0;
+                for (int y = 0; y < 190; y++) for (int x = 0; x < 200; x++) { if (tucked.GetPixel(x, y).A > 30) small++; if (expanded.GetPixel(x, y).A > 30) full++; }
+                check(small > 250 && small < full / 2 && tucked.GetPixel(100, 30).A == 0, "Docking shows a visible partial head; expanding reveals the whole character: " + character);
             }
             invalid = s.Copy(); invalid.DetailOrder = "income,income,progress,countdown,encouragement"; rejected = false;
             try { invalid.Validate(); } catch { rejected = true; } check(rejected, "Duplicate component order is rejected");

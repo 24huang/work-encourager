@@ -189,7 +189,7 @@ public static class PetModel3D
         scene.World.Children.Add(new W3.DirectionalLight(WM.Color.FromRgb(65, 79, 104), new W3.Vector3D(.8, -.1, .4)));
         Color fur = kind == 0 ? Color.FromArgb(255, 219, 165) : kind == 1 ? Color.FromArgb(188, 143, 103) : kind == 3 ? Color.FromArgb(210, 232, 244) : Color.FromArgb(255, 245, 232);
         Color accent = theme == 0 ? Color.FromArgb(96, 188, 220) : Color.FromArgb(225, 146, 184), ink = Color.FromArgb(77, 56, 49), pale = kind == 1 ? Color.FromArgb(218, 177, 132) : Color.FromArgb(255, 241, 213);
-        Ball(scene.World, 0, -.03, 0, 1.25, .012, .85, Color.FromArgb(28, 55, 55, 75));
+        if (pose != 4) Ball(scene.World, 0, -.03, 0, 1.25, .012, .85, Color.FromArgb(28, 55, 55, 75));
         W3.Model3DGroup character = new W3.Model3DGroup(); scene.World.Children.Add(character);
         scene.Breath = new W3.ScaleTransform3D(1, 1, 1, 0, 1, 0); W3.Transform3DGroup poseTransform = new W3.Transform3DGroup(); poseTransform.Children.Add(scene.Breath);
         if (pose == 1)
@@ -253,8 +253,9 @@ public static class PetModel3D
         {
             W3.Model3DGroup arm = sign < 0 ? left : right;
             W3.Point3D shoulder = new W3.Point3D(sign * .52, 1.27, .03);
-            W3.Point3D hand = pose == 3 ? new W3.Point3D(sign * .42, 1.23, 1.06) : pose == 2 ? new W3.Point3D(sign * .29, 1.34, .92) : kind == 4 && sign > 0 ? new W3.Point3D(.92, 1.95, .23) : new W3.Point3D(sign * .65, .81, .28);
+            W3.Point3D hand = pose == 4 ? new W3.Point3D(sign * .89, 2.58, .7) : pose == 3 ? new W3.Point3D(sign * .42, 1.23, 1.06) : pose == 2 ? new W3.Point3D(sign * .29, 1.34, .92) : kind == 4 && sign > 0 ? new W3.Point3D(.92, 1.95, .23) : new W3.Point3D(sign * .65, .81, .28);
             PlushArm(arm, shoulder, hand, fur);
+            if (pose == 4) Ball(arm, hand.X, hand.Y, hand.Z, .26, .2, .2, fur, kind == 3);
             if (kind == 4 && sign > 0 && pose == 0) Ball(arm, hand.X, hand.Y, hand.Z + .2, .09, .09, .02, Color.FromArgb(245, 180, 175));
         }
         W3.Model3DGroup tail = Joint(character, new W3.Vector3D(0, 1, 0), new W3.Point3D(.4, .7, -.35), out scene.Tail);
@@ -284,6 +285,21 @@ public static class PetModel3D
             for (int row = 0; row < 3; row++) for (int col = 0; col < 7; col++) Ball(scene.World, -.5 + col * .165, 1.201, .78 + row * .16, .055, .013, .047, Color.FromArgb(89, 111, 132), true);
         }
         return scene;
+    }
+    // 复用真实模型的抬爪姿态，绕屏幕法线转向四边；只裁图像，窗口始终留在可用屏幕内。
+    public static Bitmap RenderDocked(int kind, int theme, int frame, int edge, double reveal)
+    {
+        Bitmap result = new Bitmap(200, 190, PixelFormat.Format32bppPArgb);
+        using (Bitmap character = Render(kind, theme, frame, 4, 0, 0, false, false))
+        using (Graphics g = Graphics.FromImage(result))
+        {
+            g.InterpolationMode = System.Drawing.Drawing2D.InterpolationMode.HighQualityBicubic;
+            g.TranslateTransform(100, 95);
+            g.RotateTransform(edge == 1 ? 90 : edge == 2 ? -90 : edge == 3 ? 180 : 0);
+            if (edge <= 2) g.ScaleTransform(.94f, .94f);
+            g.DrawImage(character, -100, -95 + (float)(106 * (1 - Math.Max(0, Math.Min(1, reveal)))));
+        }
+        return result;
     }
     public static Bitmap Render(int kind, int theme, int frame, int pose, double yaw, double pitch, bool walking, bool speaking)
     {

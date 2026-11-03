@@ -47,11 +47,16 @@ public sealed class DesktopPet : Form
     private bool dragging, rotating, travelled;
     private double yaw, pitch, downYaw, downPitch;
     private int frame, direction = -1;
+    private int dockEdge;
+    private bool dockExpanded;
+    private double dockReveal;
+    public int DockEdge { get { return dockEdge; } }
     public bool Speaking, Paused;
     public int CurrentPose { get { return behavior.Current; } }
     [StructLayout(LayoutKind.Sequential)] private struct XY { public int X, Y; public XY(int x, int y) { X = x; Y = y; } }
     [StructLayout(LayoutKind.Sequential, Pack = 1)] private struct Blend { public byte Op, Flags, Alpha, Format; }
     [DllImport("user32.dll")] private static extern IntPtr GetDC(IntPtr window);
+    [DllImport("user32.dll")] private static extern IntPtr WindowFromPoint(Point point);
     [DllImport("user32.dll")] private static extern int ReleaseDC(IntPtr window, IntPtr dc);
     [DllImport("gdi32.dll")] private static extern IntPtr CreateCompatibleDC(IntPtr dc);
     [DllImport("gdi32.dll")] private static extern IntPtr SelectObject(IntPtr dc, IntPtr value);
@@ -69,13 +74,21 @@ public sealed class DesktopPet : Form
         Location = value.PetX == int.MinValue ? new Point(area.Right - Width - 36, area.Bottom - Height - 20) : new Point(value.PetX, value.PetY);
         Rectangle active = Screen.FromRectangle(Bounds).WorkingArea;
         Location = new Point(Math.Max(active.Left, Math.Min(Left, active.Right - Width)), Math.Max(active.Top, Math.Min(Top, active.Bottom - Height)));
+        dockEdge = value.PetDockEdge;
+        DockAt(Location, active, true);
         timer.Interval = 100; timer.Tick += delegate
         {
             frame++;
             if (!Visible) { hover.Leave(); RefreshHover(); return; }
+            if (dockEdge != 0 && !dockExpanded && Bounds.Contains(Cursor.Position) && WindowFromPoint(Cursor.Position) == Handle)
+            { dockExpanded = true; if (!hover.Inside) hover.Enter(DateTime.UtcNow); }
+            // 展开时图像会离开原来的鼠标像素；以窗口范围维持悬停，避免反复伸缩。
+            if (dockEdge != 0 && dockExpanded && !Bounds.Contains(Cursor.Position) && !Capture && !petMenu.Visible)
+            { dockExpanded = false; hover.Leave(); }
+            dockReveal = Math.Max(0, Math.Min(1, dockReveal + (dockExpanded ? .4 : -.4)));
             RefreshHover();
-            behavior.Update(settings.PetPose, DateTime.Now, Paused || Speaking || dragging || rotating || hover.Inside);
-            bool walk = settings.PetWalk && CurrentPose == 0 && !Paused && !Speaking && !dragging && !rotating && !hover.Inside && frame % 170 > 95;
+            behavior.Update(settings.PetPose, DateTime.Now, dockEdge != 0 || Paused || Speaking || dragging || rotating || hover.Inside);
+            bool walk = dockEdge == 0 && settings.PetWalk && CurrentPose == 0 && !Paused && !Speaking && !dragging && !rotating && !hover.Inside && frame % 170 > 95;
             if (walk)
             {
                 Rectangle screen = Screen.FromRectangle(Bounds).WorkingArea;
@@ -86,8 +99,12 @@ public sealed class DesktopPet : Form
             Draw(walk);
         };
         Shown += delegate { Draw(false); timer.Start(); };
-        MouseEnter += delegate { hover.Enter(DateTime.UtcNow); RefreshHover(); };
-        MouseLeave += delegate { hover.Leave(); RefreshHover(); };
+        MouseEnter += delegate { dockExpanded = dockEdge != 0; if (!hover.Inside) hover.Enter(DateTime.UtcNow); RefreshHover(); };
+        MouseLeave += delegate
+        {
+            if (dockEdge != 0 && dockExpanded && Bounds.Contains(Cursor.Position)) return;
+            dockExpanded = false; hover.Leave(); RefreshHover();
+        };
         MouseDown += delegate(object sender, MouseEventArgs e)
         {
             if (Paused || (e.Button != MouseButtons.Left && e.Button != MouseButtons.Right)) return;
@@ -102,7 +119,7 @@ public sealed class DesktopPet : Form
             if (Math.Abs(x) + Math.Abs(y) > 5) travelled = true;
             if (!travelled) return;
             if (rotating) { yaw = ((downYaw + x * .7) % 360 + 360) % 360; pitch = Math.Max(-25, Math.Min(60, downPitch + y * .45)); }
-            else Location = new Point(origin.X + x, origin.Y + y);
+            else { dockEdge = 0; dockExpanded = false; dockReveal = 0; Location = new Point(origin.X + x, origin.Y + y); }
             Draw(false);
         };
         MouseUp += delegate(object sender, MouseEventArgs e)
@@ -119,11 +136,28 @@ public sealed class DesktopPet : Form
             if (travelled)
             {
                 Rectangle screen = Screen.FromRectangle(Bounds).WorkingArea;
-                Location = new Point(Math.Max(screen.Left, Math.Min(Left, screen.Right - Width)), Math.Max(screen.Top, Math.Min(Top, screen.Bottom - Height)));
+                DockAt(Location, screen, false);
                 moved(Location);
             }
             else toggleDetails();
         };
+    }
+    public static int FindDockEdge(Rectangle bounds, Rectangle area)
+    {
+        int[] distances = { bounds.Left - area.Left, area.Right - bounds.Right, bounds.Top - area.Top, area.Bottom - bounds.Bottom };
+        int edge = 0, nearest = 25;
+        for (int i = 0; i < distances.Length; i++) if (distances[i] < nearest) { nearest = distances[i]; edge = i + 1; }
+        return edge;
+    }
+    public void DockAt(Point position, Rectangle area, bool restoring)
+    {
+        if (!restoring) dockEdge = FindDockEdge(new Rectangle(position, Size), area);
+        int x = Math.Max(area.Left, Math.Min(position.X, area.Right - Width)), y = Math.Max(area.Top, Math.Min(position.Y, area.Bottom - Height));
+        if (dockEdge == 1) x = area.Left; else if (dockEdge == 2) x = area.Right - Width;
+        else if (dockEdge == 3) y = area.Top; else if (dockEdge == 4) y = area.Bottom - Height;
+        Location = new Point(x, y);
+        dockExpanded = false; dockReveal = 0;
+        if (IsHandleCreated) Draw(false);
     }
     protected override bool ShowWithoutActivation { get { return true; } }
     private void RefreshHover()
@@ -141,8 +175,8 @@ public sealed class DesktopPet : Form
     private void Draw(bool walking)
     {
         if (!IsHandleCreated) return;
-        int pose = behavior.Update(settings.PetPose, DateTime.Now, Paused || Speaking || dragging || rotating || hover.Inside);
-        using (Bitmap bitmap = PetModel3D.Render(settings.PetCharacter, settings.Theme, frame, pose, yaw, pitch, walking, Speaking))
+        int pose = behavior.Update(settings.PetPose, DateTime.Now, dockEdge != 0 || Paused || Speaking || dragging || rotating || hover.Inside);
+        using (Bitmap bitmap = dockEdge == 0 ? PetModel3D.Render(settings.PetCharacter, settings.Theme, frame, pose, yaw, pitch, walking, Speaking) : PetModel3D.RenderDocked(settings.PetCharacter, settings.Theme, frame, dockEdge, dockReveal))
         {
             IntPtr screen = GetDC(IntPtr.Zero), dc = CreateCompatibleDC(screen), image = bitmap.GetHbitmap(Color.FromArgb(0));
             IntPtr old = SelectObject(dc, image);
