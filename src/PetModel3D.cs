@@ -189,7 +189,7 @@ public static class PetModel3D
         scene.World.Children.Add(new W3.AmbientLight(WM.Color.FromRgb(104, 109, 120)));
         scene.World.Children.Add(new W3.DirectionalLight(WM.Color.FromRgb(180, 173, 165), new W3.Vector3D(-.45, -.8, -1.2)));
         scene.World.Children.Add(new W3.DirectionalLight(WM.Color.FromRgb(65, 79, 104), new W3.Vector3D(.8, -.1, .4)));
-        Color fur = kind == 0 ? Color.FromArgb(255, 219, 165) : kind == 1 ? Color.FromArgb(188, 143, 103) : kind == 3 ? Color.FromArgb(210, 232, 244) : Color.FromArgb(255, 245, 232);
+        Color fur = kind == 0 ? Color.FromArgb(255, 219, 165) : kind == 1 ? Color.FromArgb(188, 143, 103) : kind == 3 ? Color.FromArgb(210, 232, 244) : kind == 5 ? Color.FromArgb(171, 133, 91) : Color.FromArgb(255, 245, 232);
         Color accent = theme == 0 ? Color.FromArgb(96, 188, 220) : Color.FromArgb(225, 146, 184), ink = Color.FromArgb(77, 56, 49), pale = kind == 1 ? Color.FromArgb(218, 177, 132) : Color.FromArgb(255, 241, 213);
         if (pose != 4 && pose != 5) Ball(scene.World, 0, -.03, 0, 1.25, .012, .85, Color.FromArgb(28, 55, 55, 75));
         W3.Model3DGroup character = new W3.Model3DGroup(); scene.World.Children.Add(character);
@@ -210,6 +210,28 @@ public static class PetModel3D
         character.Transform = poseTransform;
         Ball(character, 0, .88, 0, .7, .71, .54, fur, kind == 3, kind == 3, kind != 3);
         Ball(character, 0, .87, .49, .4, .43, .075, kind == 3 ? accent : pale, kind == 3, kind == 3);
+        if (kind == 5)
+        {
+            // 六块面包是独立的圆润网格，烤色外壳、柔软内芯和浅色割纹都有真实厚度。
+            for (int row = 0; row < 3; row++) for (int sign = -1; sign <= 1; sign += 2)
+            {
+                double x = sign * .215, y = 1.3 - row * .32;
+                Ball(character, x, y, .53, .205, .155, .145, Color.FromArgb(190, 116, 48), true);
+                Ball(character, x, y + .015, .644, .173, .12, .052, Color.FromArgb(237, 177, 91), true);
+                Curve(character, new[] { new W3.Point3D(x - .095, y - .017, .693), new W3.Point3D(x, y + .017, .703), new W3.Point3D(x + .095, y + .04, .693) }, .012, Color.FromArgb(255, 219, 153));
+            }
+            for (int sign = -1; sign <= 1; sign += 2) for (int row = 0; row < 3; row++)
+            {
+                W3.Point3D[] points = new W3.Point3D[5];
+                for (int i = 0; i < points.Length; i++)
+                {
+                    double y = .66 + row * .29, z = -.36 + i * .18;
+                    double x = .7 * Math.Pow(Math.Max(0, 1 - Math.Pow(Math.Abs(z / .54), 2 / .78) - Math.Pow(Math.Abs((y - .88) / .71), 2 / .78)), .78 / 2) + .012;
+                    points[i] = new W3.Point3D(sign * x, y, z);
+                }
+                Curve(character, points, .027, Color.FromArgb(111, 80, 51));
+            }
+        }
         W3.Model3DGroup leftLeg = Joint(character, new W3.Vector3D(1, 0, 0), new W3.Point3D(-.38, .65, 0), out scene.LeftLeg);
         W3.Model3DGroup rightLeg = Joint(character, new W3.Vector3D(1, 0, 0), new W3.Point3D(.38, .65, 0), out scene.RightLeg);
         Ball(leftLeg, -.38, .18, .28, .35, .21, .4, fur, kind == 3); Ball(rightLeg, .38, .18, .28, .35, .21, .4, fur, kind == 3);
@@ -233,6 +255,44 @@ public static class PetModel3D
             Ball(head, -.16, 2.14, .97, .07, .045, .035, ink); Ball(head, .16, 2.14, .97, .07, .045, .035, ink);
         }
         else { Ear(head, -.6, fur); Ear(head, .6, fur); }
+        if (kind == 5)
+        {
+            Color stripe = Color.FromArgb(94, 68, 45);
+            // 沿头部曲面铺设虎斑纹，侧面与背面仍是模型表面而不是一张正面贴图。
+            for (int mark = -1; mark <= 1; mark++)
+            {
+                W3.Point3D[] points = new W3.Point3D[7];
+                for (int i = 0; i < points.Length; i++)
+                {
+                    double x = mark * (.18 + i * .018), y = 2.98 - i * .048;
+                    double z = .73 * Math.Pow(Math.Max(0, 1 - Math.Pow(Math.Abs(x / .94), 2 / .78) - Math.Pow(Math.Abs((y - 2.32) / .73), 2 / .78)), .78 / 2) + .012;
+                    points[i] = new W3.Point3D(x, y, z);
+                }
+                Curve(head, points, .026, stripe);
+            }
+            for (int sign = -1; sign <= 1; sign += 2) for (int row = 0; row < 3; row++)
+            {
+                W3.Point3D[] points = new W3.Point3D[5];
+                for (int i = 0; i < points.Length; i++)
+                {
+                    double x = sign * (.91 - i * .045), y = 2.61 - row * .22 - i * .01;
+                    double z = .73 * Math.Pow(Math.Max(0, 1 - Math.Pow(Math.Abs(x / .94), 2 / .78) - Math.Pow(Math.Abs((y - 2.32) / .73), 2 / .78)), .78 / 2) + .012;
+                    points[i] = new W3.Point3D(x, y, z);
+                }
+                Curve(head, points, .023, stripe);
+            }
+            for (int row = 0; row < 3; row++)
+            {
+                W3.Point3D[] points = new W3.Point3D[7];
+                for (int i = 0; i < points.Length; i++)
+                {
+                    double x = -.72 + i * .24, y = 2.42 + row * .15 + .1 * (1 - Math.Abs(x));
+                    double z = -.73 * Math.Pow(Math.Max(0, 1 - Math.Pow(Math.Abs(x / .94), 2 / .78) - Math.Pow(Math.Abs((y - 2.32) / .73), 2 / .78)), .78 / 2) - .012;
+                    points[i] = new W3.Point3D(x, y, z);
+                }
+                Curve(head, points, .028, stripe);
+            }
+        }
         W3.Model3DGroup eyesLeft = new W3.Model3DGroup(), eyesRight = new W3.Model3DGroup();
         scene.EyeLeft = new W3.ScaleTransform3D(1, 1, 1, -.34, 2.4, .75); scene.EyeRight = new W3.ScaleTransform3D(1, 1, 1, .34, 2.4, .75);
         eyesLeft.Transform = scene.EyeLeft; eyesRight.Transform = scene.EyeRight; head.Children.Add(eyesLeft); head.Children.Add(eyesRight);
@@ -245,7 +305,13 @@ public static class PetModel3D
             {
                 double x = sign * (kind == 1 ? .51 : .34), z = kind == 1 ? .673 : .72;
                 if (kind != 1) z = .716;
-                Ball(eyes, x, 2.42, z, surprised ? .095 : .072, surprised ? .14 : .095, .025, ink, false, true); Ball(eyes, x - .014, 2.45, z + .024, .016, .019, .008, Color.White);
+                if (kind == 5)
+                {
+                    Ball(eyes, x, 2.42, z, .13, surprised ? .17 : .14, .035, Color.FromArgb(190, 151, 73), false, true);
+                    Ball(eyes, x, 2.42, z + .032, surprised ? .07 : .045, surprised ? .12 : .095, .018, Color.FromArgb(41, 33, 27), false, true);
+                    Ball(eyes, x - .028, 2.47, z + .05, .022, .024, .008, Color.White);
+                }
+                else { Ball(eyes, x, 2.42, z, surprised ? .095 : .072, surprised ? .14 : .095, .025, ink, false, true); Ball(eyes, x - .014, 2.45, z + .024, .016, .019, .008, Color.White); }
                 Ball(head, sign * .63, 2.19, .56, .14, .07, .025, Color.FromArgb(244, 183, 174));
             }
         }
@@ -264,21 +330,35 @@ public static class PetModel3D
             Ball(head, 0, 2.12, .7, .36, .24, .17, pale); Ball(head, 0, 2.17, .87, .065, .045, .035, Color.FromArgb(165, 111, 115));
             Curve(head, new[] { new W3.Point3D(-.15, 2.08, .855), new W3.Point3D(-.09, 2.04, .88), new W3.Point3D(0, 2.075, .891), new W3.Point3D(.09, 2.04, .88), new W3.Point3D(.15, 2.08, .855) }, .014, ink);
         }
-        W3.Model3DGroup left = Joint(character, pose == 5 ? new W3.Vector3D(0, 0, 1) : new W3.Vector3D(1, 0, 0), new W3.Point3D(-.55, 1.45, 0), out scene.LeftArm);
-        W3.Model3DGroup right = Joint(character, pose == 5 || kind == 4 && pose == 0 ? new W3.Vector3D(0, 0, 1) : new W3.Vector3D(1, 0, 0), new W3.Point3D(.55, 1.45, 0), out scene.RightArm);
+        W3.Model3DGroup left = Joint(character, pose == 5 || kind == 5 && pose == 0 ? new W3.Vector3D(0, 0, 1) : new W3.Vector3D(1, 0, 0), new W3.Point3D(-.55, 1.45, 0), out scene.LeftArm);
+        W3.Model3DGroup right = Joint(character, pose == 5 || (kind == 4 || kind == 5) && pose == 0 ? new W3.Vector3D(0, 0, 1) : new W3.Vector3D(1, 0, 0), new W3.Point3D(.55, 1.45, 0), out scene.RightArm);
         for (int sign = -1; sign <= 1; sign += 2)
         {
             W3.Model3DGroup arm = sign < 0 ? left : right;
             W3.Point3D shoulder = new W3.Point3D(sign * .52, 1.27, .03);
-            W3.Point3D hand = pose == 5 ? new W3.Point3D(sign * .85, .91, .23) : pose == 4 ? new W3.Point3D(sign * .89, 2.58, .7) : pose == 3 ? new W3.Point3D(sign * .42, 1.23, 1.06) : pose == 2 ? new W3.Point3D(sign * .29, 1.34, .92) : kind == 4 && sign > 0 ? new W3.Point3D(.92, 1.95, .23) : new W3.Point3D(sign * .65, .81, .28);
-            PlushArm(arm, shoulder, hand, fur);
+            W3.Point3D hand = pose == 5 ? new W3.Point3D(sign * .85, .91, .23) : pose == 4 ? new W3.Point3D(sign * .89, 2.58, .7) : pose == 3 ? new W3.Point3D(sign * .42, 1.23, 1.06) : pose == 2 ? new W3.Point3D(sign * .29, 1.34, .92) : kind == 5 ? new W3.Point3D(sign * 1.12, 2.16, .15) : kind == 4 && sign > 0 ? new W3.Point3D(.92, 1.95, .23) : new W3.Point3D(sign * .65, .81, .28);
+            if (kind == 5 && pose == 0)
+            {
+                W3.Point3D elbow = new W3.Point3D(sign * 1.12, 1.37, .02);
+                PlushArm(arm, shoulder, elbow, fur); PlushArm(arm, elbow, hand, fur);
+                Ball(arm, hand.X, hand.Y, hand.Z, .23, .2, .23, fur);
+            }
+            else PlushArm(arm, shoulder, hand, fur);
+            if (kind == 5)
+            {
+                double x = pose == 0 ? sign * .85 : (shoulder.X + hand.X) / 2, y = pose == 0 ? 1.47 : (shoulder.Y + hand.Y) / 2, z = pose == 0 ? .18 : (shoulder.Z + hand.Z) / 2 + .12;
+                Ball(arm, x, y, z, .27, .29, .25, Color.FromArgb(190, 116, 48));
+                Ball(arm, x, y + .025, z + .19, .21, .225, .09, Color.FromArgb(237, 177, 91));
+                Curve(arm, new[] { new W3.Point3D(x - .11, y - .035, z + .27), new W3.Point3D(x, y + .025, z + .286), new W3.Point3D(x + .1, y + .075, z + .27) }, .017, Color.FromArgb(255, 219, 153));
+            }
             if (pose == 4) Ball(arm, hand.X, hand.Y, hand.Z, .26, .2, .2, fur, kind == 3);
             if (kind == 4 && sign > 0 && pose == 0) Ball(arm, hand.X, hand.Y, hand.Z + .2, .09, .09, .02, Color.FromArgb(245, 180, 175));
         }
         W3.Model3DGroup tail = Joint(character, new W3.Vector3D(0, 1, 0), new W3.Point3D(.4, .7, -.35), out scene.Tail);
-        if (kind == 0 || kind == 4) Curve(tail, new[] { new W3.Point3D(.4, .65, -.35), new W3.Point3D(.9, .65, -.4), new W3.Point3D(1.18, .85, -.3), new W3.Point3D(1.25, 1.23, -.25) }, .14, fur);
+        if (kind == 0 || kind == 4 || kind == 5) Curve(tail, new[] { new W3.Point3D(.4, .65, -.35), new W3.Point3D(.9, .65, -.4), new W3.Point3D(1.18, .85, -.3), new W3.Point3D(1.25, 1.23, -.25) }, .14, fur);
+        if (kind == 5) for (int ring = 0; ring < 3; ring++) Ball(tail, 1.19 + ring * .025, .91 + ring * .12, -.29 + ring * .015, .143, .037, .143, Color.FromArgb(94, 68, 45));
         if (kind == 2) Ball(tail, 0, .6, -.54, .27, .27, .24, fur);
-        if (kind != 3)
+        if (kind != 3 && kind != 5)
         {
             Color collar = kind == 4 ? Color.FromArgb(214, 68, 71) : accent;
             Curve(character, new[] { new W3.Point3D(-.43, 1.64, .28), new W3.Point3D(-.25, 1.57, .48), new W3.Point3D(0, 1.54, .53), new W3.Point3D(.25, 1.57, .48), new W3.Point3D(.43, 1.64, .28) }, .045, collar);

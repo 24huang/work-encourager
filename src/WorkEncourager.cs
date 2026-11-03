@@ -947,11 +947,24 @@ public static class Program
         }
         if (args.Length > 0 && args[0] == "--preview")
         {
-            using (Bitmap expressions = new Bitmap(1000, 430))
+            using (Bitmap bread = new Bitmap(1000, 524))
+            using (Graphics g = Graphics.FromImage(bread))
+            {
+                g.Clear(Color.FromArgb(246, 247, 252));
+                string[] labels = { "面包猫 · 正面", "面包猫 · 举臂", "面包猫 · 侧面", "面包猫 · 背面", "睡觉", "摸鱼", "工作", "被拎起" };
+                double[] angles = { 0, 25, 90, 180 };
+                for (int i = 0; i < labels.Length; i++)
+                {
+                    using (Bitmap image = PetModel3D.Render(5, 0, 18, i < 4 || i == 7 ? 0 : i - 3, i < 4 ? angles[i] : 25, 12, false, false, i == 7, 250)) g.DrawImage(image, i % 4 * 250, i / 4 * 262);
+                    Widget.Write(g, labels[i], 10, Color.FromArgb(64, 69, 88), new RectangleF(i % 4 * 250, i / 4 * 262 + 237, 250, 25), FontStyle.Regular, StringAlignment.Center);
+                }
+                bread.Save(Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "bread-cat-preview.png"));
+            }
+            using (Bitmap expressions = new Bitmap(PetArt.Names.Length * 200, 430))
             using (Graphics g = Graphics.FromImage(expressions))
             {
                 g.Clear(Color.FromArgb(246, 247, 252));
-                for (int row = 0; row < 2; row++) for (int character = 0; character < 5; character++)
+                for (int row = 0; row < 2; row++) for (int character = 0; character < PetArt.Names.Length; character++)
                 {
                     using (Bitmap image = PetModel3D.Render(character, 0, 18, 0, 25, 12, false, false, row == 1)) g.DrawImage(image, character * 200, row * 215);
                     Widget.Write(g, PetArt.Names[character] + (row == 0 ? " · 平时" : " · 拖动惊讶"), 9, Color.FromArgb(64, 69, 88), new RectangleF(character * 200, row * 215 + 190, 200, 25), FontStyle.Regular, StringAlignment.Center);
@@ -964,7 +977,7 @@ public static class Program
                 using (Bitmap image = new Bitmap(preview.Width, preview.Height)) { preview.DrawToBitmap(image, preview.ClientRectangle); ApplyWindowRegion(preview, image); image.Save(Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "privacy-preview.png")); }
                 preview.Hide();
             }
-            using (Bitmap docks = new Bitmap(1000, 1075))
+            using (Bitmap docks = new Bitmap(PetArt.Names.Length * 200, 1075))
             using (Graphics g = Graphics.FromImage(docks))
             {
                 g.Clear(Color.FromArgb(246, 247, 252));
@@ -1509,7 +1522,7 @@ public static class Tests
                 check(desktop.DockEdge == 2 && desktop.Right == Screen.FromRectangle(desktop.Bounds).WorkingArea.Right, "Changing pet size retains docking at the screen edge");
                 desktop.Hide();
             }
-            for (int character = 0; character < 5; character++)
+            for (int character = 0; character < PetArt.Names.Length; character++)
             using (Bitmap normal = PetModel3D.Render(character, 0, 18, 0, 25, 12, false, false))
             using (Bitmap surprised = PetModel3D.Render(character, 0, 18, 0, 25, 12, false, false, true))
             using (Bitmap restored = PetModel3D.Render(character, 0, 18, 0, 25, 12, false, false))
@@ -1548,7 +1561,7 @@ public static class Tests
             for (int tick = 1; tick <= 12; tick++) frequent.Update(true, pickupTime.AddMilliseconds(tick * 10), 0);
             for (int tick = 1; tick <= 3; tick++) sparse.Update(true, pickupTime.AddMilliseconds(tick * 40), 0);
             check(Math.Abs(frequent.Amount - sparse.Amount) < .001, "Animation transition is independent of mouse message frequency");
-            for (int character = 0; character < 5; character++)
+            for (int character = 0; character < PetArt.Names.Length; character++)
             using (Bitmap first = PetModel3D.Render(character, 0, 0, 0, 25, 12, false, false, true))
             using (Bitmap next = PetModel3D.Render(character, 0, 6, 0, 25, 12, false, false, true))
             {
@@ -1562,6 +1575,32 @@ public static class Tests
                 bool same = true;
                 for (int y = 0; y < 190; y++) for (int x = 0; x < 200; x++) if (sitting.GetPixel(x, y) != working.GetPixel(x, y)) same = false;
                 check(same, "Temporary picked-up pose has no floating work desk and does not depend on saved activity");
+            }
+            check(PetArt.Names.Length == 6 && PetArt.Names[4] == "招财猫" && PetArt.Names[5] == "面包猫", "Bread cat appends a character without changing existing saved character IDs");
+            Settings breadConfig = new Settings { MonthlySalary = 8800, PetCharacter = 5, PetEnabled = false, DailySummaryEnabled = false, PrivacyMode = true };
+            Storage.Save(breadConfig);
+            using (SettingsForm dialog = new SettingsForm(breadConfig))
+            {
+                dialog.Opacity = 0; dialog.Show(); Application.DoEvents();
+                ComboBox choices = (ComboBox)dialog.Controls["PetCharacter"];
+                check(choices.Items.Count == 6 && choices.SelectedIndex == 5 && choices.Text == "面包猫", "Bread cat appears and remains selected in the real settings form");
+                ((Button)dialog.AcceptButton).PerformClick();
+                check(Storage.Load().PetCharacter == 5 && Storage.Load().PrivacyMode && Storage.Load().MonthlySalary == 8800, "Saving bread cat preserves salary and privacy preferences");
+            }
+            using (Widget owner = new Widget(breadConfig))
+            {
+                owner.Opacity = 0; owner.Show(); Application.DoEvents(); ToolStripMenuItem characters = null;
+                foreach (ToolStripItem item in owner.ContextMenuStrip.Items) if (item.Text == "切换桌宠形象") characters = item as ToolStripMenuItem;
+                check(characters != null && characters.DropDownItems.Count == 6 && characters.DropDownItems[5].Text == "面包猫", "Bread cat is available from the existing character menu");
+                characters.DropDownItems[5].PerformClick(); Application.DoEvents();
+                check(Storage.Load().PetCharacter == 5 && Storage.Load().PetEnabled, "Selecting bread cat from the menu enables the new pet through the original flow"); owner.Hide();
+            }
+            using (Bitmap front = PetModel3D.Render(5, 0, 18, 0, 0, 12, false, false))
+            using (Bitmap back = PetModel3D.Render(5, 0, 18, 0, 180, 12, false, false))
+            {
+                int difference = 0;
+                for (int y = 0; y < 190; y++) for (int x = 0; x < 200; x++) if (front.GetPixel(x, y) != back.GetPixel(x, y)) difference++;
+                check(difference > 1000, "Bread cat rotates as a real model with a distinct front and back");
             }
             using (ReminderPopup popup = new ReminderPopup("喝水时间到了，给自己补充一点水分。", 0))
             {

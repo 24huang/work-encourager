@@ -7,7 +7,7 @@ using System.Windows.Forms;
 
 public static class PetArt
 {
-    public static readonly string[] Names = { "猫咪", "卡皮巴拉", "小兔子", "小机器人", "招财猫" };
+    public static readonly string[] Names = { "猫咪", "卡皮巴拉", "小兔子", "小机器人", "招财猫", "面包猫" };
     public static Bitmap Render(int kind, int theme, int frame, bool walking, bool speaking)
     {
         return PetModel3D.Render(kind, theme, frame, 0, 25, 12, walking, speaking);
