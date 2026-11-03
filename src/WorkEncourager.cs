@@ -1532,6 +1532,37 @@ public static class Tests
             }
             finally { Microsoft.Win32.Registry.CurrentUser.DeleteSubKey(registryTest, false); }
             check(StartupOption.CurrentCommand == startupBefore, "Startup verification leaves real Windows startup settings untouched");
+            PetDragMotion pickup = new PetDragMotion(); DateTime pickupTime = new DateTime(2026, 11, 3, 9, 0, 0);
+            pickup.Update(false, pickupTime, 0); pickup.Update(true, pickupTime.AddMilliseconds(40), 10);
+            check(pickup.Amount > 0 && pickup.Amount < 1, "Picking up eases into the drag pose instead of snapping");
+            for (int tick = 2; tick <= 16; tick++) pickup.Update(true, pickupTime.AddMilliseconds(tick * 40), 100);
+            check(pickup.Amount == 1 && pickup.Lean > 0 && pickup.Lean <= 10, "Held pose reaches full strength while movement lean stays bounded");
+            double initialLean = pickup.Lean; pickup.Update(true, pickupTime.AddMilliseconds(680), -100);
+            check(pickup.Lean < initialLean && pickup.Lean > -10, "Reversing drag direction changes lean gradually");
+            pickup.Update(false, pickupTime.AddMilliseconds(720), 0);
+            check(pickup.Amount > 0 && pickup.Amount < 1, "Releasing retains a brief settling transition");
+            for (int tick = 19; tick <= 60; tick++) pickup.Update(false, pickupTime.AddMilliseconds(tick * 40), 0);
+            check(pickup.Amount == 0 && pickup.Lean == 0, "Interrupted or released drags always return to idle");
+            PetDragMotion frequent = new PetDragMotion(), sparse = new PetDragMotion();
+            frequent.Update(false, pickupTime, 0); sparse.Update(false, pickupTime, 0);
+            for (int tick = 1; tick <= 12; tick++) frequent.Update(true, pickupTime.AddMilliseconds(tick * 10), 0);
+            for (int tick = 1; tick <= 3; tick++) sparse.Update(true, pickupTime.AddMilliseconds(tick * 40), 0);
+            check(Math.Abs(frequent.Amount - sparse.Amount) < .001, "Animation transition is independent of mouse message frequency");
+            for (int character = 0; character < 5; character++)
+            using (Bitmap first = PetModel3D.Render(character, 0, 0, 0, 25, 12, false, false, true))
+            using (Bitmap next = PetModel3D.Render(character, 0, 6, 0, 25, 12, false, false, true))
+            {
+                int changedFeet = 0;
+                for (int y = 120; y < 190; y++) for (int x = 0; x < 200; x++) if (first.GetPixel(x, y) != next.GetPixel(x, y)) changedFeet++;
+                check(changedFeet > 80, "Held animation moves feet and body rather than only a fixed face: " + character);
+            }
+            using (Bitmap sitting = PetModel3D.Render(3, 0, 6, 0, 25, 12, false, false, true))
+            using (Bitmap working = PetModel3D.Render(3, 0, 6, 3, 25, 12, false, false, true))
+            {
+                bool same = true;
+                for (int y = 0; y < 190; y++) for (int x = 0; x < 200; x++) if (sitting.GetPixel(x, y) != working.GetPixel(x, y)) same = false;
+                check(same, "Temporary picked-up pose has no floating work desk and does not depend on saved activity");
+            }
             using (ReminderPopup popup = new ReminderPopup("喝水时间到了，给自己补充一点水分。", 0))
             {
                 popup.Opacity = 0; popup.Show(); Application.DoEvents();

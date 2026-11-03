@@ -31,6 +31,22 @@ public sealed class PetHoverState
     }
 }
 
+// 使用经过时间而不是鼠标消息次数控制过渡，拖得快慢都不会突然跳脸。
+public sealed class PetDragMotion
+{
+    private DateTime last;
+    public double Amount { get; private set; }
+    public double Lean { get; private set; }
+    public void Update(bool held, DateTime now, double impulse)
+    {
+        double seconds = last == DateTime.MinValue ? .04 : Math.Max(0, Math.Min(.1, (now - last).TotalSeconds)); last = now;
+        Amount += ((held ? 1 : 0) - Amount) * (1 - Math.Exp(-seconds / (held ? .09 : .16)));
+        Lean += ((held ? Math.Max(-10, Math.Min(10, impulse)) : 0) - Lean) * (1 - Math.Exp(-seconds / .1));
+        if (Amount < .005) Amount = 0; else if (Amount > .995) Amount = 1;
+        if (Math.Abs(Lean) < .05) Lean = 0;
+    }
+}
+
 public sealed class DesktopPet : Form
 {
     private Settings settings;
@@ -43,6 +59,10 @@ public sealed class DesktopPet : Form
     private bool previewVisible;
     private readonly ContextMenuStrip petMenu;
     private readonly PetBehavior behavior = new PetBehavior(DateTime.Now, Environment.TickCount);
+    private readonly PetDragMotion dragMotion = new PetDragMotion();
+    private Point dragLast;
+    private double dragImpulse;
+    private DateTime lastDraw;
     private Point down;
     private PointF grab;
     private bool dragging, rotating, travelled;
@@ -91,6 +111,8 @@ public sealed class DesktopPet : Form
         timer.Interval = 100; timer.Tick += delegate
         {
             frame++;
+            dragMotion.Update(dragging && travelled, DateTime.UtcNow, dragImpulse); dragImpulse *= .65;
+            timer.Interval = dragging && travelled || dragMotion.Amount > 0 ? 40 : 100;
             if (!Visible) { hover.Leave(); RefreshHover(); return; }
             if (frame % 10 == 0 && !rotating) FitDisplay();
             if (dockEdge != 0 && !dockExpanded && Bounds.Contains(Cursor.Position) && WindowFromPoint(Cursor.Position) == Handle)
@@ -100,8 +122,8 @@ public sealed class DesktopPet : Form
             { dockExpanded = false; hover.Leave(); }
             dockReveal = Math.Max(0, Math.Min(1, dockReveal + (dockExpanded ? .4 : -.4)));
             RefreshHover();
-            behavior.Update(settings.PetPose, DateTime.Now, dockEdge != 0 || Paused || Speaking || dragging || rotating || hover.Inside);
-            bool walk = dockEdge == 0 && settings.PetWalk && CurrentPose == 0 && !Paused && !Speaking && !dragging && !rotating && !hover.Inside && frame % 170 > 95;
+            behavior.Update(settings.PetPose, DateTime.Now, dockEdge != 0 || dragMotion.Amount > 0 || Paused || Speaking || dragging || rotating || hover.Inside);
+            bool walk = dockEdge == 0 && dragMotion.Amount == 0 && settings.PetWalk && CurrentPose == 0 && !Paused && !Speaking && !dragging && !rotating && !hover.Inside && frame % 170 > 95;
             if (walk)
             {
                 Rectangle screen = Screen.FromRectangle(Bounds).WorkingArea;
@@ -124,6 +146,7 @@ public sealed class DesktopPet : Form
             hover.Suppress(); RefreshHover();
             dragging = e.Button == MouseButtons.Left; rotating = e.Button == MouseButtons.Right;
             travelled = false; down = Cursor.Position; grab = new PointF(e.X / (float)Width, e.Y / (float)Height); downYaw = yaw; downPitch = pitch; Capture = true;
+            dragLast = down; dragImpulse = 0;
         };
         MouseMove += delegate
         {
@@ -132,7 +155,12 @@ public sealed class DesktopPet : Form
             if (Math.Abs(x) + Math.Abs(y) > 5) travelled = true;
             if (!travelled) return;
             if (rotating) { yaw = ((downYaw + x * .7) % 360 + 360) % 360; pitch = Math.Max(-25, Math.Min(60, downPitch + y * .45)); }
-            else { dockEdge = 0; dockExpanded = false; dockReveal = 0; Location = new Point(Cursor.Position.X - (int)(grab.X * Width), Cursor.Position.Y - (int)(grab.Y * Height)); }
+            else
+            {
+                dragImpulse = Math.Max(-10, Math.Min(10, (Cursor.Position.X - dragLast.X) * 45.0 / Width)); dragLast = Cursor.Position;
+                dragMotion.Update(true, DateTime.UtcNow, dragImpulse);
+                dockEdge = 0; dockExpanded = false; dockReveal = 0; Location = new Point(Cursor.Position.X - (int)(grab.X * Width), Cursor.Position.Y - (int)(grab.Y * Height));
+            }
             Draw(false);
         };
         MouseUp += delegate(object sender, MouseEventArgs e)
@@ -146,6 +174,7 @@ public sealed class DesktopPet : Form
             }
             if (!dragging || e.Button != MouseButtons.Left) return;
             dragging = false; Capture = false;
+            dragImpulse = 0;
             if (travelled)
             {
                 Rectangle screen = Screen.FromRectangle(Bounds).WorkingArea;
@@ -154,6 +183,7 @@ public sealed class DesktopPet : Form
             }
             else toggleDetails();
         };
+        MouseCaptureChanged += delegate { if (!Capture) { dragging = false; rotating = false; dragImpulse = 0; } };
         }
         finally { if (previousDpi != IntPtr.Zero) SetThreadDpiAwarenessContext(previousDpi); }
     }
@@ -216,7 +246,7 @@ public sealed class DesktopPet : Form
     protected override bool ShowWithoutActivation { get { return true; } }
     private void RefreshHover()
     {
-        bool show = hover.ShouldShow(DateTime.UtcNow, Paused || Speaking || dragging || rotating || petMenu.Visible || !settings.HoverEnabled);
+        bool show = hover.ShouldShow(DateTime.UtcNow, Paused || Speaking || dragging || dragMotion.Amount > 0 || rotating || petMenu.Visible || !settings.HoverEnabled);
         if (show != previewVisible) { previewVisible = show; if (hoverChanged != null) hoverChanged(show); }
     }
     protected override CreateParams CreateParams { get { CreateParams p = base.CreateParams; p.ExStyle |= 0x00080000 | 0x08000000; return p; } }
@@ -230,12 +260,27 @@ public sealed class DesktopPet : Form
     private void Draw(bool walking)
     {
         if (!IsHandleCreated) return;
-        int pose = behavior.Update(settings.PetPose, DateTime.Now, dockEdge != 0 || Paused || Speaking || dragging || rotating || hover.Inside);
-        using (Bitmap character = dockEdge == 0 ? PetModel3D.Render(settings.PetCharacter, settings.Theme, frame, pose, yaw, pitch, walking, Speaking, dragging && travelled, Math.Min(300, Width)) : PetModel3D.RenderDocked(settings.PetCharacter, settings.Theme, frame, dockEdge, dockReveal, Math.Min(300, Width)))
+        if (dragging && (DateTime.UtcNow - lastDraw).TotalMilliseconds < 35) return;
+        lastDraw = DateTime.UtcNow;
+        int pose = behavior.Update(settings.PetPose, DateTime.Now, dockEdge != 0 || dragMotion.Amount > 0 || Paused || Speaking || dragging || rotating || hover.Inside);
+        double amount = dockEdge == 0 ? dragMotion.Amount : 0;
+        using (Bitmap character = dockEdge != 0 ? PetModel3D.RenderDocked(settings.PetCharacter, settings.Theme, frame, dockEdge, dockReveal, Math.Min(300, Width)) : amount < 1 ? PetModel3D.Render(settings.PetCharacter, settings.Theme, frame, pose, yaw, pitch, walking, Speaking, false, Math.Min(300, Width)) : null)
+        using (Bitmap lifted = amount > 0 ? PetModel3D.Render(settings.PetCharacter, settings.Theme, frame, pose, yaw, pitch, false, Speaking, true, Math.Min(300, Width), dragMotion.Lean) : null)
         using (Bitmap bitmap = new Bitmap(Width, Height, PixelFormat.Format32bppPArgb))
         {
             using (Graphics graphics = Graphics.FromImage(bitmap))
-            { graphics.CompositingMode = CompositingMode.SourceCopy; graphics.InterpolationMode = InterpolationMode.HighQualityBicubic; graphics.DrawImage(character, new Rectangle(0, 0, Width, Height)); }
+            {
+                graphics.InterpolationMode = InterpolationMode.HighQualityBicubic;
+                for (int layer = 0; layer < 2; layer++)
+                {
+                    Bitmap frameImage = layer == 0 ? character : lifted; if (frameImage == null) continue;
+                    using (ImageAttributes attributes = new ImageAttributes())
+                    {
+                        ColorMatrix alpha = new ColorMatrix(); alpha.Matrix33 = (float)(layer == 0 ? 1 - amount : amount); attributes.SetColorMatrix(alpha);
+                        graphics.DrawImage(frameImage, new Rectangle(0, 0, Width, Height), 0, 0, frameImage.Width, frameImage.Height, GraphicsUnit.Pixel, attributes);
+                    }
+                }
+            }
             IntPtr screen = GetDC(IntPtr.Zero), dc = CreateCompatibleDC(screen), image = bitmap.GetHbitmap(Color.FromArgb(0));
             IntPtr old = SelectObject(dc, image);
             try

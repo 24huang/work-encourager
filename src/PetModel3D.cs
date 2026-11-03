@@ -34,8 +34,10 @@ public static class PetModel3D
     private sealed class Scene
     {
         public W3.Model3DGroup World = new W3.Model3DGroup();
-        public W3.AxisAngleRotation3D Head, LeftArm, RightArm, Tail;
+        public W3.AxisAngleRotation3D Head, LeftArm, RightArm, Tail, LeftLeg, RightLeg, Sway;
         public W3.ScaleTransform3D Breath, EyeLeft, EyeRight;
+        public W3.ScaleTransform3D Mouth;
+        public W3.TranslateTransform3D Lift;
         public double TargetY;
         public int Pose, Kind;
     }
@@ -189,7 +191,7 @@ public static class PetModel3D
         scene.World.Children.Add(new W3.DirectionalLight(WM.Color.FromRgb(65, 79, 104), new W3.Vector3D(.8, -.1, .4)));
         Color fur = kind == 0 ? Color.FromArgb(255, 219, 165) : kind == 1 ? Color.FromArgb(188, 143, 103) : kind == 3 ? Color.FromArgb(210, 232, 244) : Color.FromArgb(255, 245, 232);
         Color accent = theme == 0 ? Color.FromArgb(96, 188, 220) : Color.FromArgb(225, 146, 184), ink = Color.FromArgb(77, 56, 49), pale = kind == 1 ? Color.FromArgb(218, 177, 132) : Color.FromArgb(255, 241, 213);
-        if (pose != 4) Ball(scene.World, 0, -.03, 0, 1.25, .012, .85, Color.FromArgb(28, 55, 55, 75));
+        if (pose != 4 && pose != 5) Ball(scene.World, 0, -.03, 0, 1.25, .012, .85, Color.FromArgb(28, 55, 55, 75));
         W3.Model3DGroup character = new W3.Model3DGroup(); scene.World.Children.Add(character);
         scene.Breath = new W3.ScaleTransform3D(1, 1, 1, 0, 1, 0); W3.Transform3DGroup poseTransform = new W3.Transform3DGroup(); poseTransform.Children.Add(scene.Breath);
         if (pose == 1)
@@ -202,10 +204,15 @@ public static class PetModel3D
             poseTransform.Children.Add(new W3.RotateTransform3D(new W3.AxisAngleRotation3D(new W3.Vector3D(1, 0, 0), -18), new W3.Point3D(0, 1.3, 0))); poseTransform.Children.Add(new W3.TranslateTransform3D(0, .12, 0));
             Ball(scene.World, 0, .4, -.15, .8, .13, .7, accent, true); Ball(scene.World, 0, 1.1, -.75, .8, .8, .13, accent, true);
         }
+        scene.Sway = new W3.AxisAngleRotation3D(new W3.Vector3D(0, 0, 1), 0);
+        scene.Lift = new W3.TranslateTransform3D();
+        poseTransform.Children.Add(new W3.RotateTransform3D(scene.Sway, new W3.Point3D(0, 2.65, 0))); poseTransform.Children.Add(scene.Lift);
         character.Transform = poseTransform;
         Ball(character, 0, .88, 0, .7, .71, .54, fur, kind == 3, kind == 3, kind != 3);
         Ball(character, 0, .87, .49, .4, .43, .075, kind == 3 ? accent : pale, kind == 3, kind == 3);
-        Ball(character, -.38, .18, .28, .35, .21, .4, fur, kind == 3); Ball(character, .38, .18, .28, .35, .21, .4, fur, kind == 3);
+        W3.Model3DGroup leftLeg = Joint(character, new W3.Vector3D(1, 0, 0), new W3.Point3D(-.38, .65, 0), out scene.LeftLeg);
+        W3.Model3DGroup rightLeg = Joint(character, new W3.Vector3D(1, 0, 0), new W3.Point3D(.38, .65, 0), out scene.RightLeg);
+        Ball(leftLeg, -.38, .18, .28, .35, .21, .4, fur, kind == 3); Ball(rightLeg, .38, .18, .28, .35, .21, .4, fur, kind == 3);
         W3.Model3DGroup head = Joint(character, pose == 3 ? new W3.Vector3D(1, 0, 0) : new W3.Vector3D(0, 0, 1), new W3.Point3D(0, 2.05, 0), out scene.Head);
         W3.Transform3DGroup refinedHead = new W3.Transform3DGroup(); refinedHead.Children.Add(new W3.ScaleTransform3D(kind == 3 ? 1.05 : 1.14, 1.08, 1.09, 0, 2.32, 0)); refinedHead.Children.Add(new W3.TranslateTransform3D(0, -.17, 0)); refinedHead.Children.Add(head.Transform); head.Transform = refinedHead;
         Ball(head, 0, 2.32, 0, kind == 3 ? 1.01 : .94, .73, kind == 3 ? .65 : .73, fur, kind == 3, kind == 3, kind != 3);
@@ -247,7 +254,9 @@ public static class PetModel3D
             if (kind != 3 && kind != 1) Ball(head, 0, 2.12, .7, .36, .24, .17, pale);
             W3.Point3D[] mouth = new W3.Point3D[17];
             for (int i = 0; i < mouth.Length; i++) { double a = i * Math.PI * 2 / 16; mouth[i] = new W3.Point3D(Math.Cos(a) * .065, (kind == 1 ? 1.98 : kind == 3 ? 2.14 : 2.075) + Math.Sin(a) * .09, kind == 1 ? 1.005 : kind == 3 ? .774 : .88); }
-            Curve(head, mouth, .018, kind == 3 ? accent : ink);
+            scene.Mouth = new W3.ScaleTransform3D(1, 1, 1, 0, kind == 1 ? 1.98 : kind == 3 ? 2.14 : 2.075, 0);
+            W3.Model3DGroup movingMouth = new W3.Model3DGroup { Transform = scene.Mouth }; head.Children.Add(movingMouth);
+            Curve(movingMouth, mouth, .018, kind == 3 ? accent : ink);
         }
         else if (kind == 3) Curve(head, new[] { new W3.Point3D(-.16, 2.17, .77), new W3.Point3D(-.08, 2.11, .77), new W3.Point3D(.08, 2.11, .77), new W3.Point3D(.16, 2.17, .77) }, .023, accent);
         else if (kind != 1)
@@ -255,13 +264,13 @@ public static class PetModel3D
             Ball(head, 0, 2.12, .7, .36, .24, .17, pale); Ball(head, 0, 2.17, .87, .065, .045, .035, Color.FromArgb(165, 111, 115));
             Curve(head, new[] { new W3.Point3D(-.15, 2.08, .855), new W3.Point3D(-.09, 2.04, .88), new W3.Point3D(0, 2.075, .891), new W3.Point3D(.09, 2.04, .88), new W3.Point3D(.15, 2.08, .855) }, .014, ink);
         }
-        W3.Model3DGroup left = Joint(character, new W3.Vector3D(1, 0, 0), new W3.Point3D(-.55, 1.45, 0), out scene.LeftArm);
-        W3.Model3DGroup right = Joint(character, kind == 4 && pose == 0 ? new W3.Vector3D(0, 0, 1) : new W3.Vector3D(1, 0, 0), new W3.Point3D(.55, 1.45, 0), out scene.RightArm);
+        W3.Model3DGroup left = Joint(character, pose == 5 ? new W3.Vector3D(0, 0, 1) : new W3.Vector3D(1, 0, 0), new W3.Point3D(-.55, 1.45, 0), out scene.LeftArm);
+        W3.Model3DGroup right = Joint(character, pose == 5 || kind == 4 && pose == 0 ? new W3.Vector3D(0, 0, 1) : new W3.Vector3D(1, 0, 0), new W3.Point3D(.55, 1.45, 0), out scene.RightArm);
         for (int sign = -1; sign <= 1; sign += 2)
         {
             W3.Model3DGroup arm = sign < 0 ? left : right;
             W3.Point3D shoulder = new W3.Point3D(sign * .52, 1.27, .03);
-            W3.Point3D hand = pose == 4 ? new W3.Point3D(sign * .89, 2.58, .7) : pose == 3 ? new W3.Point3D(sign * .42, 1.23, 1.06) : pose == 2 ? new W3.Point3D(sign * .29, 1.34, .92) : kind == 4 && sign > 0 ? new W3.Point3D(.92, 1.95, .23) : new W3.Point3D(sign * .65, .81, .28);
+            W3.Point3D hand = pose == 5 ? new W3.Point3D(sign * .85, .91, .23) : pose == 4 ? new W3.Point3D(sign * .89, 2.58, .7) : pose == 3 ? new W3.Point3D(sign * .42, 1.23, 1.06) : pose == 2 ? new W3.Point3D(sign * .29, 1.34, .92) : kind == 4 && sign > 0 ? new W3.Point3D(.92, 1.95, .23) : new W3.Point3D(sign * .65, .81, .28);
             PlushArm(arm, shoulder, hand, fur);
             if (pose == 4) Ball(arm, hand.X, hand.Y, hand.Z, .26, .2, .2, fur, kind == 3);
             if (kind == 4 && sign > 0 && pose == 0) Ball(arm, hand.X, hand.Y, hand.Z + .2, .09, .09, .02, Color.FromArgb(245, 180, 175));
@@ -310,26 +319,39 @@ public static class PetModel3D
         }
         return result;
     }
-    public static Bitmap Render(int kind, int theme, int frame, int pose, double yaw, double pitch, bool walking, bool speaking, bool surprised = false, int pixelWidth = 200)
+    public static Bitmap Render(int kind, int theme, int frame, int pose, double yaw, double pitch, bool walking, bool speaking, bool surprised = false, int pixelWidth = 200, double dragLean = 0)
     {
+        if (surprised) pose = 5; // 临时被拎起姿态，不覆盖用户选择的坐/睡/摸鱼/工作状态。
         // 只缓存当前角色和视角的一轮循环。转动相机立即重新进行三维渲染，旧位图及时释放。
-        string view = kind + ":" + theme + ":" + yaw.ToString("R", CultureInfo.InvariantCulture) + ":" + pitch.ToString("R", CultureInfo.InvariantCulture) + ":" + surprised + ":" + pixelWidth;
+        string view = kind + ":" + theme + ":" + yaw.ToString("R", CultureInfo.InvariantCulture) + ":" + pitch.ToString("R", CultureInfo.InvariantCulture) + ":" + pixelWidth;
         if (view != cachedView)
         {
             foreach (Bitmap image in AnimationFrames.Values) image.Dispose(); AnimationFrames.Clear(); cachedView = view;
         }
         int phase = frame % 48;
         string animationKey = pose + ":" + phase + ":" + walking; Bitmap cached;
-        if (AnimationFrames.TryGetValue(animationKey, out cached)) return (Bitmap)cached.Clone();
+        bool cacheFrame = !surprised || Math.Abs(dragLean) < .05;
+        if (cacheFrame && AnimationFrames.TryGetValue(animationKey, out cached)) return (Bitmap)cached.Clone();
         string key = kind + ":" + theme + ":" + pose + ":" + surprised; Scene scene;
         if (!Scenes.TryGetValue(key, out scene)) { scene = Build(kind, theme, pose, surprised); Scenes.Add(key, scene); }
-        double t = phase * Math.PI * 2 / 48, eye = !surprised && (pose == 1 || phase >= 44 && phase <= 46) ? .07 : 1;
+        double t = phase * Math.PI * 2 / 48, eye = pose == 1 || phase >= 44 && phase <= 46 ? .07 : 1;
         scene.EyeLeft.ScaleY = scene.EyeRight.ScaleY = eye;
         scene.Breath.ScaleY = 1 + Math.Sin(t * (pose == 1 ? 1 : 2)) * .012;
         scene.Head.Angle = pose == 3 ? 6 + Math.Sin(t * 2) * 2 : Math.Sin(t) * 2;
         scene.LeftArm.Angle = pose == 3 ? Math.Sin(t * 6) * 4 : walking ? Math.Sin(t * 4) * 8 : Math.Sin(t * 2) * 2;
         scene.RightArm.Angle = kind == 4 && pose == 0 ? Math.Sin(t * 2) * 14 : -scene.LeftArm.Angle;
         scene.Tail.Angle = Math.Sin(t * 2) * 12;
+        if (surprised)
+        {
+            scene.Sway.Angle = Math.Sin(t * 2) * 4.5 + Math.Max(-10, Math.Min(10, dragLean));
+            scene.Lift.OffsetY = .045 + Math.Sin(t * 4) * .025;
+            scene.Head.Angle = -Math.Sin(t * 2 + .35) * 7;
+            scene.LeftLeg.Angle = Math.Sin(t * 4) * 25; scene.RightLeg.Angle = -scene.LeftLeg.Angle;
+            scene.LeftArm.Angle = -14 + Math.Sin(t * 3) * 11; scene.RightArm.Angle = 14 - Math.Sin(t * 3 + .6) * 11;
+            scene.Mouth.ScaleX = .9 + Math.Sin(t * 2) * .12; scene.Mouth.ScaleY = .85 + Math.Cos(t * 3) * .25;
+            scene.EyeLeft.ScaleY *= .93 + Math.Sin(t * 2) * .1; scene.EyeRight.ScaleY *= .93 + Math.Sin(t * 2 + .2) * .1;
+            scene.Tail.Angle = Math.Sin(t * 3) * 20;
+        }
         double angle = yaw * Math.PI / 180, elevation = pitch * Math.PI / 180, distance = scene.Pose == 3 || scene.Kind == 2 ? 9.0 : 8.1;
         W3.Vector3D offset = new W3.Vector3D(Math.Sin(angle) * Math.Cos(elevation) * distance, Math.Sin(elevation) * distance, Math.Cos(angle) * Math.Cos(elevation) * distance);
         Camera.Position = new W3.Point3D(offset.X, scene.TargetY + offset.Y, offset.Z); Camera.LookDirection = -offset; Camera.UpDirection = new W3.Vector3D(0, 1, 0);
@@ -341,8 +363,8 @@ public static class PetModel3D
             Bitmap result = new Bitmap(pixelWidth, (int)Math.Round(pixelWidth * .95), PixelFormat.Format32bppPArgb);
             using (Graphics g = Graphics.FromImage(result))
             { g.CompositingMode = System.Drawing.Drawing2D.CompositingMode.SourceCopy; g.InterpolationMode = System.Drawing.Drawing2D.InterpolationMode.HighQualityBicubic; g.PixelOffsetMode = System.Drawing.Drawing2D.PixelOffsetMode.HighQuality; g.DrawImage(high, new Rectangle(0, 0, result.Width, result.Height)); }
-            AnimationFrames.Add(animationKey, result);
-            return (Bitmap)result.Clone();
+            if (cacheFrame) { AnimationFrames.Add(animationKey, result); return (Bitmap)result.Clone(); }
+            return result;
         }
     }
 }
