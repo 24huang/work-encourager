@@ -181,7 +181,7 @@ public static class PetModel3D
         foreach (int index in new[] { 0, 1, 2, 0, 2, 3 }) face.TriangleIndices.Add(index);
         group.Children.Add(new W3.GeometryModel3D(face, new W3.DiffuseMaterial(new WM.ImageBrush(image))));
     }
-    private static Scene Build(int kind, int theme, int pose)
+    private static Scene Build(int kind, int theme, int pose, bool surprised)
     {
         Scene scene = new Scene { Pose = pose, Kind = kind, TargetY = pose == 1 ? .9 : kind == 2 ? 1.8 : 1.62 };
         scene.World.Children.Add(new W3.AmbientLight(WM.Color.FromRgb(104, 109, 120)));
@@ -232,16 +232,24 @@ public static class PetModel3D
         for (int sign = -1; sign <= 1; sign += 2)
         {
             W3.Model3DGroup eyes = sign < 0 ? eyesLeft : eyesRight;
-            if (kind == 3) Curve(eyes, new[] { new W3.Point3D(sign * .36 - .1, 2.38, .768), new W3.Point3D(sign * .36 - .065, 2.46, .774), new W3.Point3D(sign * .36 + .065, 2.46, .774), new W3.Point3D(sign * .36 + .1, 2.38, .768) }, .028, accent);
+            if (kind == 3 && surprised) Ball(eyes, sign * .36, 2.42, .774, .075, .14, .025, accent, false, true);
+            else if (kind == 3) Curve(eyes, new[] { new W3.Point3D(sign * .36 - .1, 2.38, .768), new W3.Point3D(sign * .36 - .065, 2.46, .774), new W3.Point3D(sign * .36 + .065, 2.46, .774), new W3.Point3D(sign * .36 + .1, 2.38, .768) }, .028, accent);
             else
             {
                 double x = sign * (kind == 1 ? .51 : .34), z = kind == 1 ? .673 : .72;
                 if (kind != 1) z = .716;
-                Ball(eyes, x, 2.42, z, .072, .095, .025, ink, false, true); Ball(eyes, x - .014, 2.45, z + .024, .016, .019, .008, Color.White);
+                Ball(eyes, x, 2.42, z, surprised ? .095 : .072, surprised ? .14 : .095, .025, ink, false, true); Ball(eyes, x - .014, 2.45, z + .024, .016, .019, .008, Color.White);
                 Ball(head, sign * .63, 2.19, .56, .14, .07, .025, Color.FromArgb(244, 183, 174));
             }
         }
-        if (kind == 3) Curve(head, new[] { new W3.Point3D(-.16, 2.17, .77), new W3.Point3D(-.08, 2.11, .77), new W3.Point3D(.08, 2.11, .77), new W3.Point3D(.16, 2.17, .77) }, .023, accent);
+        if (surprised)
+        {
+            if (kind != 3 && kind != 1) Ball(head, 0, 2.12, .7, .36, .24, .17, pale);
+            W3.Point3D[] mouth = new W3.Point3D[17];
+            for (int i = 0; i < mouth.Length; i++) { double a = i * Math.PI * 2 / 16; mouth[i] = new W3.Point3D(Math.Cos(a) * .065, (kind == 1 ? 1.98 : kind == 3 ? 2.14 : 2.075) + Math.Sin(a) * .09, kind == 1 ? 1.005 : kind == 3 ? .774 : .88); }
+            Curve(head, mouth, .018, kind == 3 ? accent : ink);
+        }
+        else if (kind == 3) Curve(head, new[] { new W3.Point3D(-.16, 2.17, .77), new W3.Point3D(-.08, 2.11, .77), new W3.Point3D(.08, 2.11, .77), new W3.Point3D(.16, 2.17, .77) }, .023, accent);
         else if (kind != 1)
         {
             Ball(head, 0, 2.12, .7, .36, .24, .17, pale); Ball(head, 0, 2.17, .87, .065, .045, .035, Color.FromArgb(165, 111, 115));
@@ -287,24 +295,25 @@ public static class PetModel3D
         return scene;
     }
     // 复用真实模型的抬爪姿态，绕屏幕法线转向四边；只裁图像，窗口始终留在可用屏幕内。
-    public static Bitmap RenderDocked(int kind, int theme, int frame, int edge, double reveal)
+    public static Bitmap RenderDocked(int kind, int theme, int frame, int edge, double reveal, int pixelWidth = 200)
     {
-        Bitmap result = new Bitmap(200, 190, PixelFormat.Format32bppPArgb);
-        using (Bitmap character = Render(kind, theme, frame, 4, 0, 0, false, false))
+        Bitmap result = new Bitmap(pixelWidth, (int)Math.Round(pixelWidth * .95), PixelFormat.Format32bppPArgb);
+        using (Bitmap character = Render(kind, theme, frame, 4, 0, 0, false, false, false, pixelWidth))
         using (Graphics g = Graphics.FromImage(result))
         {
             g.InterpolationMode = System.Drawing.Drawing2D.InterpolationMode.HighQualityBicubic;
+            g.ScaleTransform(pixelWidth / 200f, pixelWidth / 200f);
             g.TranslateTransform(100, 95);
             g.RotateTransform(edge == 1 ? 90 : edge == 2 ? -90 : edge == 3 ? 180 : 0);
             if (edge <= 2) g.ScaleTransform(.94f, .94f);
-            g.DrawImage(character, -100, -95 + (float)(106 * (1 - Math.Max(0, Math.Min(1, reveal)))));
+            g.DrawImage(character, new RectangleF(-100, -95 + (float)(106 * (1 - Math.Max(0, Math.Min(1, reveal)))), 200, 190));
         }
         return result;
     }
-    public static Bitmap Render(int kind, int theme, int frame, int pose, double yaw, double pitch, bool walking, bool speaking)
+    public static Bitmap Render(int kind, int theme, int frame, int pose, double yaw, double pitch, bool walking, bool speaking, bool surprised = false, int pixelWidth = 200)
     {
         // 只缓存当前角色和视角的一轮循环。转动相机立即重新进行三维渲染，旧位图及时释放。
-        string view = kind + ":" + theme + ":" + yaw.ToString("R", CultureInfo.InvariantCulture) + ":" + pitch.ToString("R", CultureInfo.InvariantCulture);
+        string view = kind + ":" + theme + ":" + yaw.ToString("R", CultureInfo.InvariantCulture) + ":" + pitch.ToString("R", CultureInfo.InvariantCulture) + ":" + surprised + ":" + pixelWidth;
         if (view != cachedView)
         {
             foreach (Bitmap image in AnimationFrames.Values) image.Dispose(); AnimationFrames.Clear(); cachedView = view;
@@ -312,9 +321,9 @@ public static class PetModel3D
         int phase = frame % 48;
         string animationKey = pose + ":" + phase + ":" + walking; Bitmap cached;
         if (AnimationFrames.TryGetValue(animationKey, out cached)) return (Bitmap)cached.Clone();
-        string key = kind + ":" + theme + ":" + pose; Scene scene;
-        if (!Scenes.TryGetValue(key, out scene)) { scene = Build(kind, theme, pose); Scenes.Add(key, scene); }
-        double t = phase * Math.PI * 2 / 48, eye = pose == 1 || phase >= 44 && phase <= 46 ? .07 : 1;
+        string key = kind + ":" + theme + ":" + pose + ":" + surprised; Scene scene;
+        if (!Scenes.TryGetValue(key, out scene)) { scene = Build(kind, theme, pose, surprised); Scenes.Add(key, scene); }
+        double t = phase * Math.PI * 2 / 48, eye = !surprised && (pose == 1 || phase >= 44 && phase <= 46) ? .07 : 1;
         scene.EyeLeft.ScaleY = scene.EyeRight.ScaleY = eye;
         scene.Breath.ScaleY = 1 + Math.Sin(t * (pose == 1 ? 1 : 2)) * .012;
         scene.Head.Angle = pose == 3 ? 6 + Math.Sin(t * 2) * 2 : Math.Sin(t) * 2;
@@ -329,9 +338,9 @@ public static class PetModel3D
         {
             BitmapData data = high.LockBits(new Rectangle(0, 0, RenderWidth, RenderHeight), ImageLockMode.WriteOnly, PixelFormat.Format32bppPArgb);
             try { Marshal.Copy(Pixels, 0, data.Scan0, Pixels.Length); } finally { high.UnlockBits(data); }
-            Bitmap result = new Bitmap(200, 190, PixelFormat.Format32bppPArgb);
+            Bitmap result = new Bitmap(pixelWidth, (int)Math.Round(pixelWidth * .95), PixelFormat.Format32bppPArgb);
             using (Graphics g = Graphics.FromImage(result))
-            { g.CompositingMode = System.Drawing.Drawing2D.CompositingMode.SourceCopy; g.InterpolationMode = System.Drawing.Drawing2D.InterpolationMode.HighQualityBicubic; g.PixelOffsetMode = System.Drawing.Drawing2D.PixelOffsetMode.HighQuality; g.DrawImage(high, new Rectangle(0, 0, 200, 190)); }
+            { g.CompositingMode = System.Drawing.Drawing2D.CompositingMode.SourceCopy; g.InterpolationMode = System.Drawing.Drawing2D.InterpolationMode.HighQualityBicubic; g.PixelOffsetMode = System.Drawing.Drawing2D.PixelOffsetMode.HighQuality; g.DrawImage(high, new Rectangle(0, 0, result.Width, result.Height)); }
             AnimationFrames.Add(animationKey, result);
             return (Bitmap)result.Clone();
         }

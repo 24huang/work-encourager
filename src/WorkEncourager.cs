@@ -28,6 +28,8 @@ public class Settings
     public int PetCharacter = 0, PetX = int.MinValue, PetY = int.MinValue;
     public int PetPose = -1;
     public int PetDockEdge = 0; // 0自由，1左、2右、3上、4下；独立于用户选择的四种姿态。
+    public int PetScale = 100;
+    public bool PrivacyMode = false;
     public double PetYaw = 25, PetPitch = 12;
     public string DetailOrder = "income,rate,progress,countdown,encouragement";
     public string DetailVisible = "income,rate,progress,countdown,encouragement";
@@ -54,6 +56,7 @@ public class Settings
         if (WidgetSize < 0 || WidgetSize > 1) throw new Exception("挂件大小设置无效。");
         if (PetCharacter < 0 || PetCharacter >= PetArt.Names.Length) throw new Exception("桌宠形象设置无效。");
         if (PetDockEdge < 0 || PetDockEdge > 4) throw new Exception("桌宠贴墙位置无效。");
+        if (PetScale < 50 || PetScale > 150) throw new Exception("桌宠大小需在50%至150%之间。");
         if (PetPose < -1 || PetPose > 3 || double.IsNaN(PetYaw) || double.IsInfinity(PetYaw) || PetYaw < 0 || PetYaw >= 360 || double.IsNaN(PetPitch) || double.IsInfinity(PetPitch) || PetPitch < -25 || PetPitch > 60)
             throw new Exception("三维视角或姿态设置无效。");
         HashSet<string> order = new HashSet<string>((DetailOrder ?? "").Split(','));
@@ -195,6 +198,9 @@ public sealed class SettingsForm : Form
     private DateTimePicker start, end, pause, resume, anchor;
     private CheckBox lunch, manual, onTop, reminders, dailySummary, petEnabled;
     private Label calculated;
+    private TrackBar petScale;
+    private CheckBox startWithWindows, revealSalary;
+    private Label hiddenSalary;
     private readonly Color ink = Color.FromArgb(32, 47, 44);
 
     public SettingsForm(Settings settings)
@@ -260,6 +266,21 @@ public sealed class SettingsForm : Form
         petCharacter = new ComboBox { Name = "PetCharacter", Location = new Point(130, 488), Width = 175, DropDownStyle = ComboBoxStyle.DropDownList };
         petCharacter.Items.AddRange(PetArt.Names); petCharacter.SelectedIndex = settings.PetCharacter; Controls.Add(petCharacter);
         petEnabled = new CheckBox { Name = "PetEnabled", Text = "启用桌宠", Location = new Point(315, 491), Size = new Size(126, 29), Checked = settings.PetEnabled }; Controls.Add(petEnabled);
+        foreach (Control control in Controls) if (control.Top >= 535) control.Top += 86;
+        LabelAt("桌宠大小", 24, 535, 105);
+        petScale = new TrackBar { Name = "PetScale", Location = new Point(125, 531), Size = new Size(230, 42), Minimum = 50, Maximum = 150, TickFrequency = 25, Value = settings.PetScale }; Controls.Add(petScale);
+        Label scaleValue = LabelAt(settings.PetScale + "%", 365, 535, 76);
+        petScale.ValueChanged += delegate { scaleValue.Text = petScale.Value + "%"; };
+        startWithWindows = new CheckBox { Name = "StartWithWindows", Text = "登录Windows后自动启动", Bounds = new Rectangle(24, 578, 417, 29), Checked = StartupOption.Enabled }; Controls.Add(startWithWindows);
+        bool startupTouched = false; startWithWindows.CheckedChanged += delegate { startupTouched = true; };
+        // 设置项较多时可滚动，避免保存按钮在较小屏幕上无法操作。
+        AutoScroll = true; AutoScrollMargin = new Size(0, 12);
+        ClientSize = new Size(470, Math.Min(840, Screen.FromPoint(Cursor.Position).WorkingArea.Height - 100));
+        salary.Width = 150;
+        revealSalary = new CheckBox { Name = "RevealSalary", Text = "查看", Bounds = new Rectangle(355, 99, 86, 28) }; Controls.Add(revealSalary);
+        hiddenSalary = new Label { Name = "HiddenSalary", Text = "金额已隐藏", Bounds = salary.Bounds, TextAlign = ContentAlignment.MiddleLeft }; Controls.Add(hiddenSalary);
+        revealSalary.CheckedChanged += delegate { salary.Visible = !original.PrivacyMode || revealSalary.Checked; hiddenSalary.Visible = !salary.Visible; };
+        ApplyPrivacy(settings.PrivacyMode);
         AcceptButton = save; CancelButton = cancel;
         if (settings.Theme == 0)
         {
@@ -330,9 +351,22 @@ public sealed class SettingsForm : Form
             next.DailySummaryEnabled = dailySummary.Checked;
             next.PetEnabled = petEnabled.Checked; next.PetCharacter = petCharacter.SelectedIndex;
             next.WidgetSize = widgetSize.SelectedIndex;
-            try { Storage.Save(next); Result = next; DialogResult = DialogResult.OK; Close(); }
+            next.PetScale = petScale.Value;
+            try
+            {
+                next.Validate(); string previousCommand = StartupOption.CurrentCommand; bool previousStartup = !string.IsNullOrEmpty(previousCommand);
+                bool startupChanged = startupTouched && (startWithWindows.Checked ? !StartupOption.UsesCurrentPath : previousStartup);
+                if (startupChanged) StartupOption.Apply(startWithWindows.Checked);
+                try { Storage.Save(next); } catch { if (startupChanged) StartupOption.Apply(previousStartup, previousCommand); throw; }
+                Result = next; DialogResult = DialogResult.OK; Close();
+            }
             catch (Exception ex) { MessageBox.Show(this, ex.Message, "设置未保存", MessageBoxButtons.OK, MessageBoxIcon.Warning); }
         };
+    }
+    public void ApplyPrivacy(bool enabled)
+    {
+        original.PrivacyMode = enabled; revealSalary.Checked = false;
+        revealSalary.Visible = enabled; salary.Visible = !enabled; hiddenSalary.Visible = enabled;
     }
     private Label LabelAt(string text, int x, int y, int width)
     {
@@ -428,6 +462,11 @@ public sealed class Widget : Form
     private ReminderPopup reminderPopup;
     private ReminderPopup hoverPopup;
     private ToolStripMenuItem hoverOptions;
+    private Button privacyButton;
+    private SettingsForm activeSettingsForm;
+    private bool privacyHotkey;
+    [DllImport("user32.dll")] private static extern bool RegisterHotKey(IntPtr window, int id, uint modifiers, uint key);
+    [DllImport("user32.dll")] private static extern bool UnregisterHotKey(IntPtr window, int id);
     private DesktopPet pet;
     private Panel detailBody;
     private ContextMenuStrip componentMenu;
@@ -446,7 +485,7 @@ public sealed class Widget : Form
         ApplyTheme();
         AutoScaleMode = AutoScaleMode.None; TopMost = settings.AlwaysOnTop;
         Rectangle area = Screen.PrimaryScreen.WorkingArea;
-        Location = s.X >= 0 ? new Point(s.X, s.Y) : new Point(area.Right - Width - 30, area.Top + 60);
+        Location = s.X != -1 ? new Point(s.X, s.Y) : new Point(area.Right - Width - 30, area.Top + 60);
         bool visible = false;
         foreach (Screen screen in Screen.AllScreens) if (Rectangle.Intersect(screen.WorkingArea, Bounds).Width > 80 && Rectangle.Intersect(screen.WorkingArea, Bounds).Height > 50) visible = true;
         if (!visible) Location = new Point(area.Right - Width - 30, area.Top + 60);
@@ -457,6 +496,8 @@ public sealed class Widget : Form
         menu.Items.Add("显示桌宠 / 挂件", null, delegate { if (settings.PetEnabled) ApplyPet(); else { Show(); Activate(); } });
         menu.Items.Add("展开 / 收起详情", null, delegate { ToggleDetails(); });
         menu.Items.Add("设置", null, delegate { OpenSettings(); });
+        ToolStripMenuItem privacy = new ToolStripMenuItem("隐私模式 · Ctrl+Alt+P");
+        privacy.Click += delegate { TogglePrivacy(); }; menu.Items.Add(privacy);
         ToolStripMenuItem characters = new ToolStripMenuItem("切换桌宠形象");
         for (int i = 0; i < PetArt.Names.Length; i++)
         {
@@ -521,6 +562,7 @@ public sealed class Widget : Form
         menu.Items.Add("退出", null, delegate { exiting = true; Close(); });
         menu.Opening += delegate
         {
+            privacy.Checked = settings.PrivacyMode;
             petMode.Checked = settings.PetEnabled; walk.Checked = settings.PetWalk;
             for (int i = 0; i < characters.DropDownItems.Count; i++) ((ToolStripMenuItem)characters.DropDownItems[i]).Checked = settings.PetCharacter == i;
             for (int i = 0; i < poses.DropDownItems.Count; i++) ((ToolStripMenuItem)poses.DropDownItems[i]).Checked = settings.PetPose == i - 1;
@@ -532,6 +574,19 @@ public sealed class Widget : Form
         tray.ContextMenuStrip = menu; ContextMenuStrip = menu;
         tray.DoubleClick += delegate { if (settings.PetEnabled) ApplyPet(); else { Show(); Activate(); } };
         detailBody = new Panel { Name = "DetailBody", AutoScroll = true, BackColor = background }; Controls.Add(detailBody);
+        privacyButton = new Button { Name = "PrivacyToggle", Text = "", AccessibleName = settings.PrivacyMode ? "关闭隐私模式" : "开启隐私模式", FlatStyle = FlatStyle.Flat, BackColor = background, ForeColor = muted, Cursor = Cursors.Hand, TabStop = true };
+        privacyButton.FlatAppearance.BorderSize = 0;
+        privacyButton.Paint += delegate(object sender, PaintEventArgs e)
+        {
+            e.Graphics.SmoothingMode = SmoothingMode.AntiAlias;
+            using (Pen pen = new Pen(settings.PrivacyMode ? accent : muted, 1.5f))
+            {
+                e.Graphics.DrawArc(pen, 3, 4, 17, 10, 0, 180); e.Graphics.DrawArc(pen, 3, 4, 17, 10, 180, 180);
+                e.Graphics.DrawEllipse(pen, 9, 6, 5, 6);
+                if (settings.PrivacyMode) e.Graphics.DrawLine(pen, 3, 2, 20, 16);
+            }
+        };
+        privacyButton.Click += delegate { TogglePrivacy(); }; Controls.Add(privacyButton);
         componentMenu = new ContextMenuStrip();
         AddButton("组件", 0, 0, 50, delegate(object sender, EventArgs e) { componentMenu.Show((Control)sender, new Point(0, 25)); });
         AddButton("⚙ 设置", 0, 0, 66, delegate { OpenSettings(); });
@@ -567,7 +622,7 @@ public sealed class Widget : Form
             string message;
             if (summary)
             {
-                message = "你今日赚了 ¥" + WorkClock.At(settings, now).Earned.ToString("N2") + "（估算）。";
+                message = SummaryMessage(settings, now);
                 settings.LastSummaryDate = now.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture);
                 try { Storage.Save(settings); }
                 catch (Exception ex) { MessageBox.Show(this, "下班总结状态未能保存，重启后可能再次提示。\n" + ex.Message, "设置未保存"); }
@@ -585,6 +640,7 @@ public sealed class Widget : Form
     }
     public void ShowMessage(string message, bool summary)
     {
+        if (summary && settings.PrivacyMode) message = SummaryMessage(settings, DateTime.Now);
         ShowHoverInfo(false);
         if (reminderPopup != null) reminderPopup.Close();
         ReminderPopup popup = new ReminderPopup(message, settings.Theme, summary, settings.PetEnabled ? PetArt.Names[settings.PetCharacter] : null); reminderPopup = popup;
@@ -610,13 +666,62 @@ public sealed class Widget : Form
         foreach (string key in DetailCard.Keys)
         {
             if (!selected.Contains(key)) continue;
-            if (key == "income") lines.Add("今日收入：" + (value.MonthlySalary == 0 ? "请先设置薪资" : "¥ " + current.Earned.ToString("N2")));
-            else if (key == "rate") lines.Add("每秒收入：" + (value.MonthlySalary == 0 ? "—" : "¥ " + current.PerSecond.ToString(current.PerSecond >= .0001m ? "0.0000" : "0.0000########")));
+            if (key == "income") lines.Add("今日收入：" + (value.PrivacyMode ? "¥ ****" : value.MonthlySalary == 0 ? "请先设置薪资" : "¥ " + current.Earned.ToString("N2")));
+            else if (key == "rate") lines.Add("每秒收入：" + (value.PrivacyMode ? "¥ ****" : value.MonthlySalary == 0 ? "—" : "¥ " + current.PerSecond.ToString(current.PerSecond >= .0001m ? "0.0000" : "0.0000########")));
             else if (key == "progress") lines.Add("上班进度：" + current.Progress.ToString("P1"));
             else if (key == "countdown") lines.Add("剩余工时：" + (current.WorkingDay ? string.Format("{0:00}:{1:00}:{2:00}", (int)(current.Remaining / 3600), (int)(current.Remaining / 60) % 60, (int)current.Remaining % 60) : "今日休息"));
             else if (key == "encouragement") lines.Add(DetailCard.EncouragementAt(now));
         }
         return string.Join("\n", lines.ToArray());
+    }
+    public static string SummaryMessage(Settings value, DateTime now)
+    {
+        return value.PrivacyMode ? "下班啦！今日收入已隐藏，辛苦了。" : "你今日赚了 ¥" + WorkClock.At(value, now).Earned.ToString("N2") + "（估算）。";
+    }
+    public void TogglePrivacy()
+    {
+        Settings next = settings.Copy(); next.PrivacyMode = !next.PrivacyMode;
+        try { Storage.Save(next); }
+        catch (Exception ex) { MessageBox.Show(this, ex.Message, "隐私设置未保存"); return; }
+        settings = next;
+        if (activeSettingsForm != null && !activeSettingsForm.IsDisposed) activeSettingsForm.ApplyPrivacy(next.PrivacyMode);
+        Snapshot current = WorkClock.At(settings, DateTime.Now);
+        foreach (Control control in detailBody.Controls) { DetailCard field = control as DetailCard; if (field != null) field.UpdateView(settings, current); }
+        if (hoverPopup != null && !hoverPopup.IsDisposed) hoverPopup.SetMessage(BuildHoverMessage(settings, DateTime.Now));
+        if (reminderPopup != null && !reminderPopup.IsDisposed && reminderPopup.Text == "下班总结 · 上班鼓励器") reminderPopup.SetMessage(SummaryMessage(settings, DateTime.Now));
+        privacyButton.AccessibleName = next.PrivacyMode ? "关闭隐私模式" : "开启隐私模式";
+        privacyButton.Invalidate(); Invalidate();
+    }
+    protected override void OnHandleCreated(EventArgs e)
+    {
+        base.OnHandleCreated(e);
+        if (Program.Interactive)
+        {
+            privacyHotkey = RegisterHotKey(Handle, 0x4345, 0x4003, (uint)Keys.P);
+            if (!privacyHotkey) BeginInvoke(new Action(delegate { tray.ShowBalloonTip(5000, "快捷键被占用", "Ctrl+Alt+P不可用，请点击详情顶部的小眼睛或使用右键菜单切换隐私模式。", ToolTipIcon.Info); }));
+        }
+    }
+    protected override void OnHandleDestroyed(EventArgs e)
+    {
+        if (privacyHotkey) { UnregisterHotKey(Handle, 0x4345); privacyHotkey = false; }
+        base.OnHandleDestroyed(e);
+    }
+    protected override void WndProc(ref Message message)
+    {
+        if (message.Msg == 0x0312 && message.WParam.ToInt32() == 0x4345) { TogglePrivacy(); return; }
+        if (message.Msg == 0x007E && IsHandleCreated && !IsDisposed)
+            BeginInvoke(new Action(delegate
+            {
+                Rectangle area = Screen.FromRectangle(Bounds).WorkingArea;
+                Location = new Point(Math.Max(area.Left, Math.Min(Left, area.Right - Width)), Math.Max(area.Top, Math.Min(Top, area.Bottom - Height)));
+                if (activeSettingsForm != null && !activeSettingsForm.IsDisposed)
+                {
+                    Form dialog = activeSettingsForm; Rectangle available = Screen.FromRectangle(dialog.Bounds).WorkingArea;
+                    dialog.Height = Math.Min(dialog.Height, Math.Max(100, available.Height - 20));
+                    dialog.Location = new Point(Math.Max(available.Left, Math.Min(dialog.Left, available.Right - dialog.Width)), Math.Max(available.Top, Math.Min(dialog.Top, available.Bottom - dialog.Height)));
+                }
+            }));
+        base.WndProc(ref message);
     }
     public void ShowHoverInfo(bool show)
     {
@@ -726,7 +831,8 @@ public sealed class Widget : Form
         foreach (Control control in Controls)
         {
             if (!(control is Button)) continue;
-            if (control.Text.Contains("设置")) control.Bounds = new Rectangle(mini ? 184 : 222, mini ? 5 : 7, 66, 24);
+            if (control.Name == "PrivacyToggle") control.Bounds = new Rectangle(Width - 38, mini ? 30 : 35, 24, 18);
+            else if (control.Text.Contains("设置")) control.Bounds = new Rectangle(mini ? 184 : 222, mini ? 5 : 7, 66, 24);
             else if (control.Text == "组件") control.Bounds = new Rectangle(mini ? 128 : 166, mini ? 5 : 7, 50, 24);
             else if (control.Text == "收起") control.Bounds = new Rectangle(mini ? 200 : 222, mini ? 272 : 329, mini ? 48 : 66, 24);
             else if (control.Text.Contains("换主题")) control.Bounds = new Rectangle(mini ? 88 : 101, mini ? 272 : 329, mini ? 88 : 98, 24);
@@ -748,8 +854,10 @@ public sealed class Widget : Form
         if (pet != null) { pet.Paused = true; pet.Enabled = false; }
         using (SettingsForm form = new SettingsForm(settings))
         {
+            activeSettingsForm = form;
             form.TopMost = settings.AlwaysOnTop;
             if (form.ShowDialog(this) == DialogResult.OK) { settings = form.Result; ApplySize(); reminderClock.Reset(DateTime.Now); }
+            activeSettingsForm = null;
         }
         TopMost = settings.AlwaysOnTop;
         foreach (Control control in Controls) if (control.Text == "已置顶" || control.Text == "置顶") control.Text = TopMost ? "已置顶" : "置顶";
@@ -811,12 +919,13 @@ public sealed class Widget : Form
         using (Pen border = new Pen(Color.FromArgb(90, secondary))) using (GraphicsPath path = Rounded(new Rectangle(0, 0, Width - 1, Height - 1), 22)) g.DrawPath(border, path);
         using (SolidBrush logo = new SolidBrush(accent)) g.FillEllipse(logo, mini ? 12 : 14, mini ? 17 : 19, 8, 8);
         Write(g, "上班鼓励器", mini ? 9.5f : 10, ink, new RectangleF(mini ? 27 : 30, mini ? 5 : 7, 125, 27), FontStyle.Bold, StringAlignment.Near);
-        Write(g, "拖动组件排序 · 可滚动查看", 7, muted, new RectangleF(14, mini ? 31 : 36, Width - 28, 17), FontStyle.Regular, StringAlignment.Near);
+        Write(g, settings.PrivacyMode ? "隐私模式 · 金额已隐藏" : "拖动组件排序 · 可滚动查看", 7, muted, new RectangleF(14, mini ? 31 : 36, Width - 60, 17), FontStyle.Regular, StringAlignment.Near);
     }
 }
 
 public static class Program
 {
+    public static bool Interactive;
     private static void ApplyWindowRegion(Form form, Bitmap image)
     {
         if (form.Region == null) return;
@@ -838,6 +947,23 @@ public static class Program
         }
         if (args.Length > 0 && args[0] == "--preview")
         {
+            using (Bitmap expressions = new Bitmap(1000, 430))
+            using (Graphics g = Graphics.FromImage(expressions))
+            {
+                g.Clear(Color.FromArgb(246, 247, 252));
+                for (int row = 0; row < 2; row++) for (int character = 0; character < 5; character++)
+                {
+                    using (Bitmap image = PetModel3D.Render(character, 0, 18, 0, 25, 12, false, false, row == 1)) g.DrawImage(image, character * 200, row * 215);
+                    Widget.Write(g, PetArt.Names[character] + (row == 0 ? " · 平时" : " · 拖动惊讶"), 9, Color.FromArgb(64, 69, 88), new RectangleF(character * 200, row * 215 + 190, 200, 25), FontStyle.Regular, StringAlignment.Center);
+                }
+                expressions.Save(Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "drag-preview.png"));
+            }
+            using (Widget preview = new Widget(new Settings { MonthlySalary = 8800, PrivacyMode = true, DailySummaryEnabled = false, PetEnabled = false }))
+            {
+                preview.Opacity = 0; preview.Show(); Application.DoEvents();
+                using (Bitmap image = new Bitmap(preview.Width, preview.Height)) { preview.DrawToBitmap(image, preview.ClientRectangle); ApplyWindowRegion(preview, image); image.Save(Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "privacy-preview.png")); }
+                preview.Hide();
+            }
             using (Bitmap docks = new Bitmap(1000, 1075))
             using (Graphics g = Graphics.FromImage(docks))
             {
@@ -939,7 +1065,7 @@ public static class Program
         bool first;
         using (Mutex mutex = new Mutex(true, "Local\\WorkEncourager_DCodex", out first))
         {
-            if (!first) { MessageBox.Show("上班鼓励器已在运行。请双击任务栏右下角的托盘图标显示挂件。", "上班鼓励器"); return; }
+            if (!first) { if (Array.IndexOf(args, "--startup") < 0) MessageBox.Show("上班鼓励器已在运行。请双击任务栏右下角的托盘图标显示挂件。", "上班鼓励器"); return; }
             Settings settings;
             try { settings = Storage.Load(); }
             catch (Exception ex)
@@ -947,6 +1073,7 @@ public static class Program
                 MessageBox.Show("设置读取失败，暂用初始设置。原设置文件保留，保存新设置时会备份原文件。\n" + ex.Message, "上班鼓励器");
                 settings = new Settings();
             }
+            Interactive = true;
             using (Widget widget = new Widget(settings)) Application.Run(widget);
         }
     }
@@ -1332,6 +1459,79 @@ public static class Tests
             }
             using (StringReader legacy = new StringReader("<Settings><MonthlySalary>8800</MonthlySalary></Settings>"))
                 check(!((Settings)new XmlSerializer(typeof(Settings)).Deserialize(legacy)).RemindersEnabled, "Legacy settings keep reminders opt-in");
+            check(DesktopPet.SizeFor(50, 96, new Size(1920, 1080)) == new Size(100, 95) && DesktopPet.SizeFor(150, 96, new Size(1920, 1080)) == new Size(300, 285), "Pet scale covers both slider limits");
+            check(DesktopPet.SizeFor(100, 144, new Size(1920, 1080)) == new Size(300, 285) && DesktopPet.SizeFor(75, 192, new Size(1920, 1080)) == new Size(300, 285), "User scale composes with different monitor DPI values");
+            Size tiny = DesktopPet.SizeFor(150, 288, new Size(240, 180));
+            check(tiny.Width < 240 && tiny.Height < 180, "Large scaled pets fit into a small working area");
+            invalid = s.Copy(); invalid.PetScale = 49; rejected = false; try { invalid.Validate(); } catch { rejected = true; } check(rejected, "Out-of-range pet scale is rejected");
+            using (StringReader legacy = new StringReader("<Settings><MonthlySalary>8800</MonthlySalary></Settings>"))
+            { Settings old = (Settings)new XmlSerializer(typeof(Settings)).Deserialize(legacy); check(old.PetScale == 100 && !old.PrivacyMode, "Legacy settings preserve size and visibility defaults"); }
+            Settings privateSettings = new Settings { MonthlySalary = 8800, ManualDays = true, Days = 22, ManualMonth = "2026-11", PrivacyMode = true, PetEnabled = false, DailySummaryEnabled = false };
+            string masked = Widget.BuildHoverMessage(privateSettings, new DateTime(2026, 11, 2, 18, 0, 0));
+            check(masked.Contains("¥ ****") && !masked.Contains("400.00") && masked.Contains("上班进度"), "Privacy masks hover amounts while retaining progress");
+            check(!Widget.SummaryMessage(privateSettings, new DateTime(2026, 11, 2, 18, 0, 0)).Contains("400.00") && Widget.SummaryMessage(privateSettings, DateTime.Now).Contains("已隐藏"), "Private daily summaries never contain an amount");
+            check(WorkClock.At(privateSettings, new DateTime(2026, 11, 2, 18, 0, 0)).Earned == 400, "Privacy leaves salary calculations unchanged");
+            Storage.Save(privateSettings);
+            using (Widget owner = new Widget(privateSettings))
+            {
+                owner.Opacity = 0; owner.Show(); Application.DoEvents();
+                owner.ShowMessage("你今日赚了 ¥400.00（估算）。", true); Application.DoEvents();
+                ReminderPopup summaryPopup = null; foreach (Form form in Application.OpenForms) if (form.Text == "下班总结 · 上班鼓励器") summaryPopup = form as ReminderPopup;
+                check(summaryPopup != null && !summaryPopup.Controls[0].AccessibleName.Contains("400.00"), "Showing a summary enforces privacy even for preformatted messages");
+                Button eye = owner.Controls["PrivacyToggle"] as Button; eye.PerformClick(); Application.DoEvents();
+                check(!Storage.Load().PrivacyMode && Storage.Load().MonthlySalary == privateSettings.MonthlySalary && summaryPopup.Controls[0].AccessibleName.Contains("¥"), "Eye button reveals amounts without changing salary configuration");
+                eye.PerformClick(); Application.DoEvents();
+                check(Storage.Load().PrivacyMode && !summaryPopup.Controls[0].AccessibleName.Contains("¥"), "Eye button immediately redacts an already-open summary");
+                summaryPopup.Close(); owner.Hide();
+            }
+            using (SettingsForm dialog = new SettingsForm(privateSettings))
+            {
+                dialog.Opacity = 0; dialog.Show(); Application.DoEvents();
+                NumericUpDown salaryField = null; foreach (Control control in dialog.Controls) if (control is NumericUpDown && ((NumericUpDown)control).Maximum == 100000000) salaryField = (NumericUpDown)control;
+                CheckBox reveal = (CheckBox)dialog.Controls["RevealSalary"];
+                check(salaryField != null && !salaryField.Visible && dialog.Controls["HiddenSalary"].Visible, "Privacy hides salary when opening settings");
+                reveal.Checked = true; check(salaryField.Visible, "Salary can be explicitly revealed for editing");
+                dialog.ApplyPrivacy(true); check(!salaryField.Visible && !reveal.Checked, "Toggling privacy hides a revealed salary again");
+                ((TrackBar)dialog.Controls["PetScale"]).Value = 75; ((Button)dialog.AcceptButton).PerformClick();
+                check(Storage.Load().PetScale == 75 && Storage.Load().PrivacyMode, "Scale and privacy survive saving through the settings dialog");
+            }
+            using (ContextMenuStrip menu = new ContextMenuStrip())
+            using (DesktopPet desktop = new DesktopPet(new Settings { PetScale = 50 }, delegate { }, delegate(Point p) { }, menu))
+            {
+                desktop.Show(); Application.DoEvents(); Size small = desktop.ClientSize;
+                desktop.ApplySettings(new Settings { PetScale = 150 }); Application.DoEvents();
+                check(Math.Abs(desktop.Width - small.Width * 3) <= 2, "Native transparent pet resizes without losing its handle");
+                Rectangle area = Screen.FromRectangle(desktop.Bounds).WorkingArea;
+                desktop.Location = new Point(area.Right + 5000, area.Bottom + 5000); desktop.FitDisplay();
+                check(Screen.FromRectangle(desktop.Bounds).WorkingArea.Contains(desktop.Bounds), "An unreachable saved monitor position returns to an available display");
+                desktop.DockAt(new Point(area.Right - desktop.Width, area.Top + 30), area, false);
+                desktop.ApplySettings(new Settings { PetScale = 75 });
+                check(desktop.DockEdge == 2 && desktop.Right == Screen.FromRectangle(desktop.Bounds).WorkingArea.Right, "Changing pet size retains docking at the screen edge");
+                desktop.Hide();
+            }
+            for (int character = 0; character < 5; character++)
+            using (Bitmap normal = PetModel3D.Render(character, 0, 18, 0, 25, 12, false, false))
+            using (Bitmap surprised = PetModel3D.Render(character, 0, 18, 0, 25, 12, false, false, true))
+            using (Bitmap restored = PetModel3D.Render(character, 0, 18, 0, 25, 12, false, false))
+            {
+                int changed = 0, changedBack = 0;
+                for (int y = 0; y < 190; y++) for (int x = 0; x < 200; x++) { if (normal.GetPixel(x, y) != surprised.GetPixel(x, y)) changed++; if (normal.GetPixel(x, y) != restored.GetPixel(x, y)) changedBack++; }
+                check(changed > 50 && changedBack == 0, "Drag expression changes the model and restores without polluting cached idle frames: " + character);
+            }
+            string registryTest = @"Software\WorkEncouragerVerification_" + Guid.NewGuid().ToString("N");
+            string startupBefore = StartupOption.CurrentCommand;
+            try
+            {
+                using (Microsoft.Win32.RegistryKey key = Microsoft.Win32.Registry.CurrentUser.CreateSubKey(registryTest))
+                {
+                    string examplePath = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "folder with spaces", "上班鼓励器.exe");
+                    StartupOption.Write(key, true, examplePath);
+                    check((string)key.GetValue(StartupOption.ValueName) == "\"" + examplePath + "\" --startup", "Startup commands quote Unicode and space-containing executable paths");
+                    StartupOption.Write(key, false, examplePath); check(key.GetValue(StartupOption.ValueName) == null, "Disabling startup removes the app entry");
+                }
+            }
+            finally { Microsoft.Win32.Registry.CurrentUser.DeleteSubKey(registryTest, false); }
+            check(StartupOption.CurrentCommand == startupBefore, "Startup verification leaves real Windows startup settings untouched");
             using (ReminderPopup popup = new ReminderPopup("喝水时间到了，给自己补充一点水分。", 0))
             {
                 popup.Opacity = 0; popup.Show(); Application.DoEvents();

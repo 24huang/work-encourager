@@ -43,13 +43,16 @@ public sealed class DesktopPet : Form
     private bool previewVisible;
     private readonly ContextMenuStrip petMenu;
     private readonly PetBehavior behavior = new PetBehavior(DateTime.Now, Environment.TickCount);
-    private Point down, origin;
+    private Point down;
+    private PointF grab;
     private bool dragging, rotating, travelled;
     private double yaw, pitch, downYaw, downPitch;
     private int frame, direction = -1;
     private int dockEdge;
     private bool dockExpanded;
     private double dockReveal;
+    private bool fitting, perMonitorDpi;
+    private Rectangle displayArea;
     public int DockEdge { get { return dockEdge; } }
     public bool Speaking, Paused;
     public int CurrentPose { get { return behavior.Current; } }
@@ -57,6 +60,9 @@ public sealed class DesktopPet : Form
     [StructLayout(LayoutKind.Sequential, Pack = 1)] private struct Blend { public byte Op, Flags, Alpha, Format; }
     [DllImport("user32.dll")] private static extern IntPtr GetDC(IntPtr window);
     [DllImport("user32.dll")] private static extern IntPtr WindowFromPoint(Point point);
+    [DllImport("user32.dll")] private static extern IntPtr SetThreadDpiAwarenessContext(IntPtr context);
+    [DllImport("user32.dll")] private static extern IntPtr MonitorFromPoint(Point point, int flags);
+    [DllImport("shcore.dll")] private static extern int GetScaleFactorForMonitor(IntPtr monitor, out int scale);
     [DllImport("user32.dll")] private static extern int ReleaseDC(IntPtr window, IntPtr dc);
     [DllImport("gdi32.dll")] private static extern IntPtr CreateCompatibleDC(IntPtr dc);
     [DllImport("gdi32.dll")] private static extern IntPtr SelectObject(IntPtr dc, IntPtr value);
@@ -66,6 +72,11 @@ public sealed class DesktopPet : Form
     public DesktopPet(Settings value, Action toggle, Action<Point> onMoved, ContextMenuStrip menu, Action<double, double> onViewChanged = null, Action<bool> onHoverChanged = null)
     {
         settings = value; toggleDetails = toggle; moved = onMoved; petMenu = menu; viewChanged = onViewChanged; hoverChanged = onHoverChanged;
+        // 仅桌宠窗口使用每屏DPI，其余已有表单继续使用原来的缩放模式。
+        IntPtr previousDpi = IntPtr.Zero;
+        try { previousDpi = SetThreadDpiAwarenessContext(new IntPtr(-4)); perMonitorDpi = previousDpi != IntPtr.Zero; } catch (EntryPointNotFoundException) { }
+        try
+        {
         yaw = value.PetYaw; pitch = value.PetPitch;
         Text = "桌宠 · 上班鼓励器"; ClientSize = new Size(200, 190); FormBorderStyle = FormBorderStyle.None;
         ShowInTaskbar = false; StartPosition = FormStartPosition.Manual; AutoScaleMode = AutoScaleMode.None;
@@ -76,10 +87,12 @@ public sealed class DesktopPet : Form
         Location = new Point(Math.Max(active.Left, Math.Min(Left, active.Right - Width)), Math.Max(active.Top, Math.Min(Top, active.Bottom - Height)));
         dockEdge = value.PetDockEdge;
         DockAt(Location, active, true);
+        IntPtr nativeWindow = Handle; FitDisplay();
         timer.Interval = 100; timer.Tick += delegate
         {
             frame++;
             if (!Visible) { hover.Leave(); RefreshHover(); return; }
+            if (frame % 10 == 0 && !rotating) FitDisplay();
             if (dockEdge != 0 && !dockExpanded && Bounds.Contains(Cursor.Position) && WindowFromPoint(Cursor.Position) == Handle)
             { dockExpanded = true; if (!hover.Inside) hover.Enter(DateTime.UtcNow); }
             // 展开时图像会离开原来的鼠标像素；以窗口范围维持悬停，避免反复伸缩。
@@ -110,7 +123,7 @@ public sealed class DesktopPet : Form
             if (Paused || (e.Button != MouseButtons.Left && e.Button != MouseButtons.Right)) return;
             hover.Suppress(); RefreshHover();
             dragging = e.Button == MouseButtons.Left; rotating = e.Button == MouseButtons.Right;
-            travelled = false; down = Cursor.Position; origin = Location; downYaw = yaw; downPitch = pitch; Capture = true;
+            travelled = false; down = Cursor.Position; grab = new PointF(e.X / (float)Width, e.Y / (float)Height); downYaw = yaw; downPitch = pitch; Capture = true;
         };
         MouseMove += delegate
         {
@@ -119,7 +132,7 @@ public sealed class DesktopPet : Form
             if (Math.Abs(x) + Math.Abs(y) > 5) travelled = true;
             if (!travelled) return;
             if (rotating) { yaw = ((downYaw + x * .7) % 360 + 360) % 360; pitch = Math.Max(-25, Math.Min(60, downPitch + y * .45)); }
-            else { dockEdge = 0; dockExpanded = false; dockReveal = 0; Location = new Point(origin.X + x, origin.Y + y); }
+            else { dockEdge = 0; dockExpanded = false; dockReveal = 0; Location = new Point(Cursor.Position.X - (int)(grab.X * Width), Cursor.Position.Y - (int)(grab.Y * Height)); }
             Draw(false);
         };
         MouseUp += delegate(object sender, MouseEventArgs e)
@@ -141,6 +154,47 @@ public sealed class DesktopPet : Form
             }
             else toggleDetails();
         };
+        }
+        finally { if (previousDpi != IntPtr.Zero) SetThreadDpiAwarenessContext(previousDpi); }
+    }
+    public static Size SizeFor(int percent, int dpi, Size available)
+    {
+        double scale = percent / 100.0 * dpi / 96.0;
+        scale = Math.Min(scale, Math.Min(Math.Max(1, available.Width - 8) / 200.0, Math.Max(1, available.Height - 8) / 190.0));
+        return new Size(Math.Max(1, (int)Math.Round(200 * scale)), Math.Max(1, (int)Math.Round(190 * scale)));
+    }
+    public void FitDisplay()
+    {
+        if (fitting || settings == null || !IsHandleCreated || IsDisposed) return;
+        fitting = true;
+        try
+        {
+            Rectangle area = (dragging ? Screen.FromPoint(Cursor.Position) : Screen.FromRectangle(Bounds)).WorkingArea;
+            int factor = 100;
+            if (perMonitorDpi)
+            {
+                try { int actual; if (GetScaleFactorForMonitor(MonitorFromPoint(new Point(area.Left + area.Width / 2, area.Top + area.Height / 2), 2), out actual) == 0) factor = actual; }
+                catch (DllNotFoundException) { } catch (EntryPointNotFoundException) { }
+            }
+            else using (Graphics g = Graphics.FromHwnd(Handle)) factor = (int)Math.Round(g.DpiX / 96 * 100);
+            Size next = SizeFor(settings.PetScale, (int)Math.Round(factor * .96), area.Size);
+            bool changed = next != ClientSize || displayArea != area;
+            displayArea = area;
+            if (!changed && (dragging || area.Contains(Bounds))) return;
+            ClientSize = next;
+            if (!dragging) DockAt(Location, area, true);
+            else Draw(false);
+        }
+        finally { fitting = false; }
+    }
+    protected override void WndProc(ref Message message)
+    {
+        if ((message.Msg == 0x02E0 || message.Msg == 0x007E) && IsHandleCreated && !IsDisposed)
+        {
+            // 延后到本次显示器变更消息处理完，再重新读取屏幕工作区。
+            BeginInvoke(new Action(delegate { FitDisplay(); }));
+        }
+        base.WndProc(ref message);
     }
     public static int FindDockEdge(Rectangle bounds, Rectangle area)
     {
@@ -170,14 +224,18 @@ public sealed class DesktopPet : Form
     {
         settings = value; TopMost = value.AlwaysOnTop;
         if (!rotating) { yaw = value.PetYaw; pitch = value.PetPitch; }
+        FitDisplay();
         if (Visible) Draw(false);
     }
     private void Draw(bool walking)
     {
         if (!IsHandleCreated) return;
         int pose = behavior.Update(settings.PetPose, DateTime.Now, dockEdge != 0 || Paused || Speaking || dragging || rotating || hover.Inside);
-        using (Bitmap bitmap = dockEdge == 0 ? PetModel3D.Render(settings.PetCharacter, settings.Theme, frame, pose, yaw, pitch, walking, Speaking) : PetModel3D.RenderDocked(settings.PetCharacter, settings.Theme, frame, dockEdge, dockReveal))
+        using (Bitmap character = dockEdge == 0 ? PetModel3D.Render(settings.PetCharacter, settings.Theme, frame, pose, yaw, pitch, walking, Speaking, dragging && travelled, Math.Min(300, Width)) : PetModel3D.RenderDocked(settings.PetCharacter, settings.Theme, frame, dockEdge, dockReveal, Math.Min(300, Width)))
+        using (Bitmap bitmap = new Bitmap(Width, Height, PixelFormat.Format32bppPArgb))
         {
+            using (Graphics graphics = Graphics.FromImage(bitmap))
+            { graphics.CompositingMode = CompositingMode.SourceCopy; graphics.InterpolationMode = InterpolationMode.HighQualityBicubic; graphics.DrawImage(character, new Rectangle(0, 0, Width, Height)); }
             IntPtr screen = GetDC(IntPtr.Zero), dc = CreateCompatibleDC(screen), image = bitmap.GetHbitmap(Color.FromArgb(0));
             IntPtr old = SelectObject(dc, image);
             try

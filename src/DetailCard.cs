@@ -79,13 +79,13 @@ public sealed class DetailCard : Control
         Widget.Write(g, "⠿", 10, secondary, new RectangleF(Width - 27, 3, 19, 21), FontStyle.Regular, StringAlignment.Center);
         if (Key == "income")
         {
-            string amount = settings.MonthlySalary == 0 ? "¥ —" : "¥ " + snapshot.Earned.ToString("N2");
-            Widget.Write(g, amount, snapshot.Earned >= 1000000 ? 13 : snapshot.Earned >= 100000 ? 17 : mini ? 23 : 27, ink, new RectangleF(8, 22, Width - 16, Height - 23), FontStyle.Bold, StringAlignment.Near);
+            string amount = settings.PrivacyMode ? "¥ ****" : settings.MonthlySalary == 0 ? "¥ —" : "¥ " + snapshot.Earned.ToString("N2");
+            Widget.Write(g, amount, settings.PrivacyMode ? mini ? 23 : 27 : snapshot.Earned >= 1000000 ? 13 : snapshot.Earned >= 100000 ? 17 : mini ? 23 : 27, ink, new RectangleF(8, 22, Width - 16, Height - 23), FontStyle.Bold, StringAlignment.Near);
             Widget.Write(g, "估算", 7, muted, new RectangleF(Width - 57, Height - 23, 44, 16), FontStyle.Regular, StringAlignment.Far);
         }
         else if (Key == "rate")
         {
-            string amount = settings.MonthlySalary == 0 ? "设置薪资后显示" : "¥ " + snapshot.PerSecond.ToString(snapshot.PerSecond >= .0001m ? "0.0000" : "0.0000########") + " / 秒";
+            string amount = settings.PrivacyMode ? "¥ **** / 秒" : settings.MonthlySalary == 0 ? "设置薪资后显示" : "¥ " + snapshot.PerSecond.ToString(snapshot.PerSecond >= .0001m ? "0.0000" : "0.0000########") + " / 秒";
             Widget.Write(g, amount, mini ? 11 : 12, accent, new RectangleF(10, 22, Width - 20, Height - 23), FontStyle.Bold, StringAlignment.Near);
         }
         else if (Key == "progress")
