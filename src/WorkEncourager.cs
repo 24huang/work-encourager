@@ -31,8 +31,8 @@ public class Settings
     public int PetScale = 100;
     public bool PrivacyMode = false;
     public double PetYaw = 25, PetPitch = 12;
-    public string DetailOrder = "income,rate,progress,countdown,encouragement";
-    public string DetailVisible = "income,rate,progress,countdown,encouragement";
+    public string DetailOrder = "income,rate,progress,countdown,encouragement,month";
+    public string DetailVisible = "income,rate,progress,countdown,encouragement,month";
     public bool HoverEnabled = true;
     public string HoverVisible = "income,rate,progress,countdown";
     public string ManualMonth = DateTime.Today.ToString("yyyy-MM");
@@ -74,7 +74,7 @@ public sealed class Snapshot
     public bool WorkingDay;
     public double Total, Elapsed, Progress, Remaining;
     public int MonthDays;
-    public decimal Daily, Earned, PerSecond;
+    public decimal Daily, Earned, PerSecond, MonthEarned;
     public string Status;
 }
 
@@ -124,6 +124,10 @@ public static class WorkClock
         result.Daily = s.MonthlySalary / result.MonthDays;
         result.PerSecond = result.Daily / (decimal)total;
         result.Earned = result.Daily * (decimal)result.Progress;
+        // 月累计是当前配置下的估算，不依赖程序运行历史；封顶不影响既有今日收入。
+        int completedDays = 0;
+        for (int day = 1; day < now.Day; day++) if (IsWorkingDay(s, new DateTime(now.Year, now.Month, day))) completedDays++;
+        result.MonthEarned = completedDays + (decimal)result.Progress >= result.MonthDays ? s.MonthlySalary : Math.Min(s.MonthlySalary, result.Daily * completedDays + result.Earned);
         result.Status = !result.WorkingDay ? "今日休息" : now < start ? "尚未开工" : now >= end ? "今日已下班" : s.HasBreak && now >= pause && now < resume ? "午休充电中" : "正在积累小确幸";
         return result;
     }
@@ -173,6 +177,12 @@ public static class Storage
         using (FileStream stream = File.OpenRead(PathName))
         {
             Settings s = (Settings)new XmlSerializer(typeof(Settings)).Deserialize(stream);
+            // 只迁移合法的旧五组件顺序，保留用户显隐和原排序；损坏的配置仍由Validate报错。
+            string[] previousOrder = (s.DetailOrder ?? "").Split(',');
+            HashSet<string> previousKeys = new HashSet<string>(previousOrder);
+            bool legacyOrder = previousOrder.Length == 5 && previousKeys.Count == 5 && !previousKeys.Contains("month");
+            foreach (string key in previousOrder) if (Array.IndexOf(DetailCard.Keys, key) < 0) legacyOrder = false;
+            if (legacyOrder) s.DetailOrder += ",month";
             s.Validate();
             return s;
         }
@@ -667,6 +677,7 @@ public sealed class Widget : Form
         {
             if (!selected.Contains(key)) continue;
             if (key == "income") lines.Add("今日收入：" + (value.PrivacyMode ? "¥ ****" : value.MonthlySalary == 0 ? "请先设置薪资" : "¥ " + current.Earned.ToString("N2")));
+            else if (key == "month") lines.Add("本月累计：" + (value.PrivacyMode ? "¥ ****" : value.MonthlySalary == 0 ? "请先设置薪资" : "¥ " + current.MonthEarned.ToString("N2")));
             else if (key == "rate") lines.Add("每秒收入：" + (value.PrivacyMode ? "¥ ****" : value.MonthlySalary == 0 ? "—" : "¥ " + current.PerSecond.ToString(current.PerSecond >= .0001m ? "0.0000" : "0.0000########")));
             else if (key == "progress") lines.Add("上班进度：" + current.Progress.ToString("P1"));
             else if (key == "countdown") lines.Add("剩余工时：" + (current.WorkingDay ? string.Format("{0:00}:{1:00}:{2:00}", (int)(current.Remaining / 3600), (int)(current.Remaining / 60) % 60, (int)current.Remaining % 60) : "今日休息"));
@@ -947,6 +958,13 @@ public static class Program
         }
         if (args.Length > 0 && args[0] == "--preview")
         {
+            for (int privacy = 0; privacy < 2; privacy++)
+            using (Widget preview = new Widget(new Settings { MonthlySalary = 8800, PrivacyMode = privacy == 1, DailySummaryEnabled = false, PetEnabled = false, DetailOrder = "month,income,rate,progress,countdown,encouragement", DetailVisible = "month,income,progress" }))
+            {
+                preview.Opacity = 0; preview.Show(); Application.DoEvents();
+                using (Bitmap image = new Bitmap(preview.Width, preview.Height)) { preview.DrawToBitmap(image, preview.ClientRectangle); ApplyWindowRegion(preview, image); image.Save(Path.Combine(AppDomain.CurrentDomain.BaseDirectory, privacy == 0 ? "monthly-preview.png" : "monthly-private-preview.png")); }
+                preview.Hide();
+            }
             using (Bitmap bread = new Bitmap(1000, 524))
             using (Graphics g = Graphics.FromImage(bread))
             {
@@ -1240,7 +1258,7 @@ public static class Tests
             using (StringReader legacy = new StringReader("<Settings><MonthlySalary>8800</MonthlySalary></Settings>"))
             {
                 Settings old = (Settings)new XmlSerializer(typeof(Settings)).Deserialize(legacy); old.Validate();
-                check(old.PetEnabled && old.PetCharacter == 0 && old.DetailOrder.Split(',').Length == 5, "Legacy configuration enables default pet and all detail components");
+                check(old.PetEnabled && old.PetCharacter == 0 && old.DetailOrder.Split(',').Length == DetailCard.Keys.Length, "Legacy configuration enables default pet and all detail components");
             }
             Settings petSettings = new Settings { PetCharacter = 3, PetX = 100, PetY = 200, PetWalk = true, DailySummaryEnabled = false };
             Storage.Save(petSettings);
@@ -1601,6 +1619,41 @@ public static class Tests
                 int difference = 0;
                 for (int y = 0; y < 190; y++) for (int x = 0; x < 200; x++) if (front.GetPixel(x, y) != back.GetPixel(x, y)) difference++;
                 check(difference > 1000, "Bread cat rotates as a real model with a distinct front and back");
+            }
+            Settings monthly = new Settings { MonthlySalary = 8800, ManualDays = true, Days = 22, ManualMonth = "2026-11", DailySummaryEnabled = false, PetEnabled = false };
+            check(WorkClock.At(monthly, new DateTime(2026, 11, 1, 18, 0, 0)).MonthEarned == 0 && WorkClock.At(monthly, new DateTime(2026, 11, 2, 8, 0, 0)).MonthEarned == 0, "Month starts at zero, including a resting first day");
+            check(WorkClock.At(monthly, new DateTime(2026, 11, 5, 14, 0, 0)).MonthEarned == 1400, "Monthly estimate includes prior workdays and today's partial progress without an execution history");
+            check(WorkClock.At(monthly, new DateTime(2026, 11, 5, 12, 0, 0)).MonthEarned == WorkClock.At(monthly, new DateTime(2026, 11, 5, 13, 0, 0)).MonthEarned, "Monthly income pauses for lunch");
+            check(WorkClock.At(monthly, new DateTime(2026, 11, 7, 14, 0, 0)).MonthEarned == 2000, "Rest days retain accumulated earnings without adding income");
+            monthly.WorkMode = 2;
+            check(WorkClock.At(monthly, new DateTime(2026, 11, 8, 18, 0, 0)).MonthEarned == 2400, "Monthly income follows the alternating-week Saturday anchor");
+            monthly.WorkMode = 0; monthly.SingleRest = 3;
+            check(WorkClock.At(monthly, new DateTime(2026, 11, 4, 18, 0, 0)).MonthEarned == 1200, "Monthly income follows a custom single-rest weekday");
+            monthly.WorkMode = 1; monthly.ManualDays = false;
+            check(WorkClock.At(monthly, new DateTime(2026, 11, 30, 18, 0, 0)).MonthEarned == 8800 && WorkClock.At(monthly, new DateTime(2028, 2, 29, 18, 0, 0)).MonthEarned == 8800, "Automatic monthly income reaches the salary at month-end, including leap February");
+            check(WorkClock.At(monthly, new DateTime(2026, 12, 1, 8, 0, 0)).MonthEarned == 0 && WorkClock.At(monthly, new DateTime(2027, 1, 1, 8, 0, 0)).MonthEarned == 0, "Month and year changes start a fresh monthly estimate");
+            monthly.ManualDays = true; monthly.Days = 1;
+            Snapshot capped = WorkClock.At(monthly, new DateTime(2026, 11, 5, 14, 0, 0));
+            check(capped.MonthEarned == 8800 && capped.Earned == 4400, "Monthly cap does not change existing daily income calculations");
+            monthly.Days = 31;
+            check(WorkClock.At(monthly, new DateTime(2026, 11, 30, 18, 0, 0)).MonthEarned < 8800, "A larger manual day divisor is respected rather than forcing a full monthly salary");
+            monthly.MonthlySalary = 0; check(WorkClock.At(monthly, new DateTime(2026, 11, 5, 18, 0, 0)).MonthEarned == 0, "Unconfigured salary produces zero monthly income");
+            string oldOrder = "countdown,progress,rate,income,encouragement";
+            File.WriteAllText(Storage.PathName, "<Settings><MonthlySalary>8800</MonthlySalary><DetailOrder>" + oldOrder + "</DetailOrder><DetailVisible>rate,progress</DetailVisible><HoverVisible>countdown</HoverVisible></Settings>");
+            Settings migrated = Storage.Load();
+            check(migrated.DetailOrder == oldOrder + ",month" && migrated.DetailVisible == "rate,progress" && migrated.HoverVisible == "countdown", "Legacy component migration preserves custom order, hidden fields and hover selection");
+            Storage.Save(migrated); check(Storage.Load().DetailOrder == migrated.DetailOrder, "Monthly component migration is idempotent after saving");
+            monthly = new Settings { MonthlySalary = 8800, PetEnabled = false, DailySummaryEnabled = false, PrivacyMode = true, HoverVisible = "month,progress" };
+            Storage.Save(monthly);
+            check(Widget.BuildHoverMessage(monthly, new DateTime(2026, 11, 5, 14, 0, 0)).Contains("本月累计：¥ ****"), "Monthly hover amounts obey privacy mode");
+            using (Widget owner = new Widget(monthly))
+            {
+                owner.Opacity = 0; owner.Show(); Application.DoEvents(); Panel body = (Panel)owner.Controls["DetailBody"];
+                check(body.Controls["Detail_month"] is DetailCard, "Monthly income is an independent detail component");
+                owner.MoveComponent("month", "income"); check(Storage.Load().DetailOrder.StartsWith("month,"), "Monthly component can move to the front and persist its order");
+                owner.SetComponentVisible("month", false); check(body.Controls["Detail_month"] == null, "Monthly component can be hidden without removing daily income");
+                owner.SetComponentVisible("month", true); owner.TogglePrivacy();
+                check(!Storage.Load().PrivacyMode && Widget.BuildHoverMessage(Storage.Load(), new DateTime(2026, 11, 5, 14, 0, 0)).Contains("本月累计：¥ ") && !Widget.BuildHoverMessage(Storage.Load(), DateTime.Now).Contains("****"), "Eye button reveals monthly hover income along with other amounts"); owner.Hide();
             }
             using (ReminderPopup popup = new ReminderPopup("喝水时间到了，给自己补充一点水分。", 0))
             {
