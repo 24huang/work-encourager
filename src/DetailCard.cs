@@ -5,8 +5,8 @@ using System.Windows.Forms;
 
 public sealed class DetailCard : Control
 {
-    public static readonly string[] Keys = { "income", "rate", "progress", "countdown", "encouragement", "month" };
-    public static readonly string[] Titles = { "今日收入", "每秒收入", "上班进度", "剩余有效工时", "鼓励语", "本月累计" };
+    public static readonly string[] Keys = { "income", "rate", "progress", "countdown", "encouragement", "month", "overtime" };
+    public static readonly string[] Titles = { "今日收入", "每秒收入", "上班进度", "剩余有效工时", "鼓励语", "本月累计", "加班与调休" };
     private static readonly string[] Phrases = { "每一点努力，都在靠近生活的小目标。", "工作有进度，生活也要留一点甜。", "认真上班，也记得适时起身喝水。" };
     public static string EncouragementAt(DateTime now) { return Phrases[(now.DayOfYear + now.Hour / 2) % Phrases.Length]; }
     public readonly string Key;
@@ -50,6 +50,7 @@ public sealed class DetailCard : Control
     public static int CardHeight(string key, bool mini)
     {
         if (key == "income" || key == "month") return mini ? 64 : 76;
+        if (key == "overtime") return mini ? 102 : 110;
         if (key == "rate") return mini ? 44 : 48;
         if (key == "progress") return mini ? 56 : 64;
         if (key == "countdown") return mini ? 60 : 68;
@@ -83,6 +84,12 @@ public sealed class DetailCard : Control
             string amount = settings.PrivacyMode ? "¥ ****" : settings.MonthlySalary == 0 ? "¥ —" : "¥ " + earned.ToString("N2");
             Widget.Write(g, amount, settings.PrivacyMode ? mini ? 23 : 27 : earned >= 1000000 ? 13 : earned >= 100000 ? 17 : mini ? 23 : 27, ink, new RectangleF(8, 22, Width - 16, Height - 23), FontStyle.Bold, StringAlignment.Near);
             Widget.Write(g, Key == "month" ? "本月估算" : "估算", 7, muted, new RectangleF(Width - 57, Height - 23, 44, 16), FontStyle.Regular, StringAlignment.Far);
+        }
+        else if (Key == "overtime")
+        {
+            Widget.Write(g, "今日 " + (snapshot.Overtime.TodayMinutes / 60m).ToString("0.#") + " 小时" + (settings.PrivacyMode ? "" : " · ¥ " + snapshot.Overtime.TodayValue.ToString("N2")), 9, ink, new RectangleF(10, 24, Width - 20, 24), FontStyle.Bold, StringAlignment.Near);
+            Widget.Write(g, "可调休 " + (snapshot.Overtime.BalanceMinutes / 60m).ToString("0.#") + " 小时", 9, ink, new RectangleF(10, 48, Width - 20, 24), FontStyle.Regular, StringAlignment.Near);
+            Widget.Write(g, settings.PrivacyMode ? "对应加班费已隐藏" : "余额折算 ¥ " + snapshot.Overtime.BalanceValue.ToString("N2"), 9, accent, new RectangleF(10, 73, Width - 20, 24), FontStyle.Regular, StringAlignment.Near);
         }
         else if (Key == "rate")
         {

@@ -24,6 +24,10 @@ public class Settings
     public int WaterIntervalMinutes = 30, RestroomIntervalMinutes = 30;
     public bool DailySummaryEnabled = true;
     public string LastSummaryDate = "";
+    public string LastSummaryEnd = "";
+    public int OvertimePreset = 120;
+    public List<OvertimeEntry> OvertimeEntries = new List<OvertimeEntry>();
+    public List<LeaveEntry> LeaveEntries = new List<LeaveEntry>();
     public bool PetEnabled = true, PetWalk = false;
     public int PetCharacter = 0, PetX = int.MinValue, PetY = int.MinValue;
     public int PetPose = -1;
@@ -31,14 +35,19 @@ public class Settings
     public int PetScale = 100;
     public bool PrivacyMode = false;
     public double PetYaw = 25, PetPitch = 12;
-    public string DetailOrder = "income,rate,progress,countdown,encouragement,month";
-    public string DetailVisible = "income,rate,progress,countdown,encouragement,month";
+    public string DetailOrder = "income,rate,progress,countdown,encouragement,month,overtime";
+    public string DetailVisible = "income,rate,progress,countdown,encouragement,month,overtime";
     public bool HoverEnabled = true;
     public string HoverVisible = "income,rate,progress,countdown";
     public string ManualMonth = DateTime.Today.ToString("yyyy-MM");
     public DateTime DoubleSaturday = new DateTime(2026, 10, 31);
 
-    public Settings Copy() { return (Settings)MemberwiseClone(); }
+    public Settings Copy()
+    {
+        Settings copy = (Settings)MemberwiseClone();
+        copy.OvertimeEntries = OvertimeEntries.ConvertAll(delegate(OvertimeEntry entry) { return entry.Copy(); });
+        copy.LeaveEntries = LeaveEntries.ConvertAll(delegate(LeaveEntry entry) { return entry.Copy(); }); return copy;
+    }
     public void Validate()
     {
         TimeSpan a, b, c, d;
@@ -66,6 +75,7 @@ public class Settings
         foreach (string key in (HoverVisible ?? "").Split(',')) if (key.Length > 0 && Array.IndexOf(DetailCard.Keys, key) < 0) throw new Exception("悬浮信息配置无效。");
         if (DoubleSaturday.DayOfWeek != DayOfWeek.Saturday)
             throw new Exception("大小周的参考日期请选择一个双休周的周六。");
+        OvertimeClock.Validate(this, DateTime.Now);
     }
 }
 
@@ -76,6 +86,7 @@ public sealed class Snapshot
     public int MonthDays;
     public decimal Daily, Earned, PerSecond, MonthEarned;
     public string Status;
+    public OvertimeSnapshot Overtime;
 }
 
 public static class WorkClock
@@ -129,13 +140,22 @@ public static class WorkClock
         for (int day = 1; day < now.Day; day++) if (IsWorkingDay(s, new DateTime(now.Year, now.Month, day))) completedDays++;
         result.MonthEarned = completedDays + (decimal)result.Progress >= result.MonthDays ? s.MonthlySalary : Math.Min(s.MonthlySalary, result.Daily * completedDays + result.Earned);
         result.Status = !result.WorkingDay ? "今日休息" : now < start ? "尚未开工" : now >= end ? "今日已下班" : s.HasBreak && now >= pause && now < resume ? "午休充电中" : "正在积累小确幸";
+        result.Overtime = OvertimeClock.At(s, now);
         return result;
     }
     public static bool SummaryDue(Settings settings, DateTime now)
     {
         // 只补发当天的总结，日期随配置保存，重启和重新打开设置都不会重复弹出。
-        return settings.DailySummaryEnabled && settings.MonthlySalary > 0 && IsWorkingDay(settings, now) &&
-            now.TimeOfDay >= TimeSpan.Parse(settings.End) && settings.LastSummaryDate != now.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture);
+        DateTime end = SummaryEnd(settings, now);
+        DateTime delivered;
+        if (!DateTime.TryParseExact(settings.LastSummaryEnd, "s", CultureInfo.InvariantCulture, DateTimeStyles.None, out delivered) || delivered.Date != now.Date) delivered = now.Date.Add(TimeSpan.Parse(settings.End));
+        return settings.DailySummaryEnabled && settings.MonthlySalary > 0 && IsWorkingDay(settings, now) && now >= end &&
+            (settings.LastSummaryDate != now.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture) || end > delivered);
+    }
+    public static DateTime SummaryEnd(Settings settings, DateTime now)
+    {
+        DateTime regular = now.Date.Add(TimeSpan.Parse(settings.End)), overtime = OvertimeClock.At(settings, now).LastEnd;
+        return overtime > regular ? overtime : regular;
     }
 }
 
@@ -150,9 +170,10 @@ public sealed class ReminderClock
         if (!settings.RemindersEnabled || now.Date != last.Date || now < last)
         { Reset(now); return null; }
         Snapshot current = WorkClock.At(settings, now);
-        double delta = Math.Max(0, current.Elapsed - WorkClock.At(settings, last).Elapsed);
+        Snapshot previous = WorkClock.At(settings, last);
+        double delta = Math.Max(0, current.Elapsed + current.Overtime.ElapsedSeconds - previous.Elapsed - previous.Overtime.ElapsedSeconds);
         last = now;
-        if (!current.WorkingDay || now.TimeOfDay < TimeSpan.Parse(settings.Start) || now.TimeOfDay >= TimeSpan.Parse(settings.End))
+        if ((!current.WorkingDay || now.TimeOfDay < TimeSpan.Parse(settings.Start) || now.TimeOfDay >= TimeSpan.Parse(settings.End)) && !current.Overtime.Active)
         { waterSeconds = restroomSeconds = 0; return null; }
         if (settings.ReminderMode != 2) waterSeconds += delta;
         if (settings.ReminderMode != 1) restroomSeconds += delta;
@@ -183,6 +204,10 @@ public static class Storage
             bool legacyOrder = previousOrder.Length == 5 && previousKeys.Count == 5 && !previousKeys.Contains("month");
             foreach (string key in previousOrder) if (Array.IndexOf(DetailCard.Keys, key) < 0) legacyOrder = false;
             if (legacyOrder) s.DetailOrder += ",month";
+            string[] six = s.DetailOrder.Split(','); HashSet<string> sixKeys = new HashSet<string>(six);
+            bool previousSix = six.Length == 6 && sixKeys.Count == 6 && !sixKeys.Contains("overtime");
+            foreach (string key in six) if (Array.IndexOf(DetailCard.Keys, key) < 0) previousSix = false;
+            if (previousSix) s.DetailOrder += ",overtime";
             s.Validate();
             return s;
         }
@@ -474,6 +499,7 @@ public sealed class Widget : Form
     private ToolStripMenuItem hoverOptions;
     private Button privacyButton;
     private SettingsForm activeSettingsForm;
+    private OvertimeForm activeOvertimeForm;
     private bool privacyHotkey;
     [DllImport("user32.dll")] private static extern bool RegisterHotKey(IntPtr window, int id, uint modifiers, uint key);
     [DllImport("user32.dll")] private static extern bool UnregisterHotKey(IntPtr window, int id);
@@ -506,6 +532,7 @@ public sealed class Widget : Form
         menu.Items.Add("显示桌宠 / 挂件", null, delegate { if (settings.PetEnabled) ApplyPet(); else { Show(); Activate(); } });
         menu.Items.Add("展开 / 收起详情", null, delegate { ToggleDetails(); });
         menu.Items.Add("设置", null, delegate { OpenSettings(); });
+        menu.Items.Add("今日加班 / 调休", null, delegate { OpenOvertime(); });
         ToolStripMenuItem privacy = new ToolStripMenuItem("隐私模式 · Ctrl+Alt+P");
         privacy.Click += delegate { TogglePrivacy(); }; menu.Items.Add(privacy);
         ToolStripMenuItem characters = new ToolStripMenuItem("切换桌宠形象");
@@ -634,6 +661,7 @@ public sealed class Widget : Form
             {
                 message = SummaryMessage(settings, now);
                 settings.LastSummaryDate = now.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture);
+                settings.LastSummaryEnd = WorkClock.SummaryEnd(settings, now).ToString("s", CultureInfo.InvariantCulture);
                 try { Storage.Save(settings); }
                 catch (Exception ex) { MessageBox.Show(this, "下班总结状态未能保存，重启后可能再次提示。\n" + ex.Message, "设置未保存"); }
                 if (reminderPopup != null) reminderPopup.Close();
@@ -678,6 +706,7 @@ public sealed class Widget : Form
             if (!selected.Contains(key)) continue;
             if (key == "income") lines.Add("今日收入：" + (value.PrivacyMode ? "¥ ****" : value.MonthlySalary == 0 ? "请先设置薪资" : "¥ " + current.Earned.ToString("N2")));
             else if (key == "month") lines.Add("本月累计：" + (value.PrivacyMode ? "¥ ****" : value.MonthlySalary == 0 ? "请先设置薪资" : "¥ " + current.MonthEarned.ToString("N2")));
+            else if (key == "overtime") lines.Add(OvertimeClock.Text(value, current.Overtime));
             else if (key == "rate") lines.Add("每秒收入：" + (value.PrivacyMode ? "¥ ****" : value.MonthlySalary == 0 ? "—" : "¥ " + current.PerSecond.ToString(current.PerSecond >= .0001m ? "0.0000" : "0.0000########")));
             else if (key == "progress") lines.Add("上班进度：" + current.Progress.ToString("P1"));
             else if (key == "countdown") lines.Add("剩余工时：" + (current.WorkingDay ? string.Format("{0:00}:{1:00}:{2:00}", (int)(current.Remaining / 3600), (int)(current.Remaining / 60) % 60, (int)current.Remaining % 60) : "今日休息"));
@@ -687,7 +716,9 @@ public sealed class Widget : Form
     }
     public static string SummaryMessage(Settings value, DateTime now)
     {
-        return value.PrivacyMode ? "下班啦！今日收入已隐藏，辛苦了。" : "你今日赚了 ¥" + WorkClock.At(value, now).Earned.ToString("N2") + "（估算）。";
+        Snapshot current = WorkClock.At(value, now);
+        string message = value.PrivacyMode ? "下班啦！今日收入已隐藏，辛苦了。" : "你今日赚了 ¥" + current.Earned.ToString("N2") + "（估算）。";
+        return current.Overtime.Planned ? message + "\n" + OvertimeClock.Text(value, current.Overtime) : message;
     }
     public void TogglePrivacy()
     {
@@ -696,6 +727,7 @@ public sealed class Widget : Form
         catch (Exception ex) { MessageBox.Show(this, ex.Message, "隐私设置未保存"); return; }
         settings = next;
         if (activeSettingsForm != null && !activeSettingsForm.IsDisposed) activeSettingsForm.ApplyPrivacy(next.PrivacyMode);
+        if (activeOvertimeForm != null && !activeOvertimeForm.IsDisposed) activeOvertimeForm.ApplyPrivacy(next.PrivacyMode);
         Snapshot current = WorkClock.At(settings, DateTime.Now);
         foreach (Control control in detailBody.Controls) { DetailCard field = control as DetailCard; if (field != null) field.UpdateView(settings, current); }
         if (hoverPopup != null && !hoverPopup.IsDisposed) hoverPopup.SetMessage(BuildHoverMessage(settings, DateTime.Now));
@@ -860,6 +892,8 @@ public sealed class Widget : Form
     }
     private void OpenSettings()
     {
+        if (activeOvertimeForm != null && !activeOvertimeForm.IsDisposed) { activeOvertimeForm.Activate(); return; }
+        if (activeSettingsForm != null && !activeSettingsForm.IsDisposed) { activeSettingsForm.Activate(); return; }
         ShowHoverInfo(false);
         Show(); TopMost = false;
         if (pet != null) { pet.Paused = true; pet.Enabled = false; }
@@ -876,6 +910,27 @@ public sealed class Widget : Form
         if (pet != null) { pet.Paused = false; pet.Enabled = true; }
         ApplyPet();
         Invalidate();
+    }
+    private void OpenOvertime()
+    {
+        if (activeSettingsForm != null && !activeSettingsForm.IsDisposed) { activeSettingsForm.Activate(); return; }
+        if (activeOvertimeForm != null && !activeOvertimeForm.IsDisposed) { activeOvertimeForm.Activate(); return; }
+        ShowHoverInfo(false); bool wasVisible = Visible;
+        Show(); TopMost = false; if (pet != null) { pet.Paused = true; pet.Enabled = false; }
+        try
+        {
+            using (OvertimeForm form = new OvertimeForm(settings, delegate { return settings; }))
+            {
+                activeOvertimeForm = form; form.TopMost = settings.AlwaysOnTop;
+                if (form.ShowDialog(this) == DialogResult.OK) { settings = form.Result; RebuildComponents(); reminderClock.Reset(DateTime.Now); }
+            }
+        }
+        finally
+        {
+            activeOvertimeForm = null; TopMost = settings.AlwaysOnTop;
+            if (pet != null) { pet.Paused = false; pet.Enabled = true; } ApplyPet();
+            if (!wasVisible && settings.PetEnabled) Hide();
+        }
     }
     private void ApplyTheme()
     {
@@ -958,8 +1013,22 @@ public static class Program
         }
         if (args.Length > 0 && args[0] == "--preview")
         {
+            Settings overtimeDemo = new Settings { MonthlySalary = 8800, DailySummaryEnabled = false, PetEnabled = false, DetailOrder = "overtime,income,rate,progress,countdown,encouragement,month", DetailVisible = "overtime,income" };
+            overtimeDemo.OvertimeEntries.Add(new OvertimeEntry { Start = DateTime.Today.AddDays(-1).AddHours(18), Minutes = 120, HourlyRate = 50 });
+            using (OvertimeForm preview = new OvertimeForm(overtimeDemo))
+            {
+                preview.Opacity = 0; preview.Show(); Application.DoEvents();
+                using (Bitmap image = new Bitmap(preview.Width, preview.Height)) { preview.DrawToBitmap(image, new Rectangle(0, 0, preview.Width, preview.Height)); image.Save(Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "overtime-settings-preview.png")); }
+                preview.Hide();
+            }
+            using (Widget preview = new Widget(overtimeDemo))
+            {
+                preview.Opacity = 0; preview.Show(); Application.DoEvents();
+                using (Bitmap image = new Bitmap(preview.Width, preview.Height)) { preview.DrawToBitmap(image, preview.ClientRectangle); ApplyWindowRegion(preview, image); image.Save(Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "overtime-preview.png")); }
+                preview.Hide();
+            }
             for (int privacy = 0; privacy < 2; privacy++)
-            using (Widget preview = new Widget(new Settings { MonthlySalary = 8800, PrivacyMode = privacy == 1, DailySummaryEnabled = false, PetEnabled = false, DetailOrder = "month,income,rate,progress,countdown,encouragement", DetailVisible = "month,income,progress" }))
+            using (Widget preview = new Widget(new Settings { MonthlySalary = 8800, PrivacyMode = privacy == 1, DailySummaryEnabled = false, PetEnabled = false, DetailOrder = "month,income,rate,progress,countdown,encouragement,overtime", DetailVisible = "month,income,progress" }))
             {
                 preview.Opacity = 0; preview.Show(); Application.DoEvents();
                 using (Bitmap image = new Bitmap(preview.Width, preview.Height)) { preview.DrawToBitmap(image, preview.ClientRectangle); ApplyWindowRegion(preview, image); image.Save(Path.Combine(AppDomain.CurrentDomain.BaseDirectory, privacy == 0 ? "monthly-preview.png" : "monthly-private-preview.png")); }
@@ -1641,7 +1710,7 @@ public static class Tests
             string oldOrder = "countdown,progress,rate,income,encouragement";
             File.WriteAllText(Storage.PathName, "<Settings><MonthlySalary>8800</MonthlySalary><DetailOrder>" + oldOrder + "</DetailOrder><DetailVisible>rate,progress</DetailVisible><HoverVisible>countdown</HoverVisible></Settings>");
             Settings migrated = Storage.Load();
-            check(migrated.DetailOrder == oldOrder + ",month" && migrated.DetailVisible == "rate,progress" && migrated.HoverVisible == "countdown", "Legacy component migration preserves custom order, hidden fields and hover selection");
+            check(migrated.DetailOrder == oldOrder + ",month,overtime" && migrated.DetailVisible == "rate,progress" && migrated.HoverVisible == "countdown", "Legacy component migration preserves custom order, hidden fields and hover selection");
             Storage.Save(migrated); check(Storage.Load().DetailOrder == migrated.DetailOrder, "Monthly component migration is idempotent after saving");
             monthly = new Settings { MonthlySalary = 8800, PetEnabled = false, DailySummaryEnabled = false, PrivacyMode = true, HoverVisible = "month,progress" };
             Storage.Save(monthly);
@@ -1668,6 +1737,7 @@ public static class Tests
                 while (!popup.IsDisposed && waiting.Elapsed.TotalSeconds < 17) { Application.DoEvents(); Thread.Sleep(25); }
                 check(popup.IsDisposed && waiting.Elapsed.TotalSeconds >= 14, "Popup automatically dismisses after fifteen seconds");
             }
+            OvertimeTests.Run(check);
             report.AppendLine("All " + checks + " checks passed.");
         }
         catch (Exception ex) { report.AppendLine(ex.ToString()); Environment.ExitCode = 1; }
