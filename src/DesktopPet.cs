@@ -259,14 +259,17 @@ public sealed class DesktopPet : Form
     }
     private void Draw(bool walking)
     {
-        if (!IsHandleCreated) return;
+        if (IsDisposed || !IsHandleCreated || WindowState == FormWindowState.Minimized || ClientSize.Width <= 0 || ClientSize.Height <= 0) return;
+        // 三维渲染可能处理嵌套窗口消息，整帧沿用同一尺寸，尺寸变化则等下一帧。
+        Size renderSize = Size;
+        if (renderSize.Width <= 0 || renderSize.Height <= 0) return;
         if (dragging && (DateTime.UtcNow - lastDraw).TotalMilliseconds < 35) return;
         lastDraw = DateTime.UtcNow;
         int pose = behavior.Update(settings.PetPose, DateTime.Now, dockEdge != 0 || dragMotion.Amount > 0 || Paused || Speaking || dragging || rotating || hover.Inside);
         double amount = dockEdge == 0 ? dragMotion.Amount : 0;
-        using (Bitmap character = dockEdge != 0 ? PetModel3D.RenderDocked(settings.PetCharacter, settings.Theme, frame, dockEdge, dockReveal, Math.Min(300, Width)) : amount < 1 ? PetModel3D.Render(settings.PetCharacter, settings.Theme, frame, pose, yaw, pitch, walking, Speaking, false, Math.Min(300, Width)) : null)
-        using (Bitmap lifted = amount > 0 ? PetModel3D.Render(settings.PetCharacter, settings.Theme, frame, pose, yaw, pitch, false, Speaking, true, Math.Min(300, Width), dragMotion.Lean) : null)
-        using (Bitmap bitmap = new Bitmap(Width, Height, PixelFormat.Format32bppPArgb))
+        using (Bitmap character = dockEdge != 0 ? PetModel3D.RenderDocked(settings.PetCharacter, settings.Theme, frame, dockEdge, dockReveal, Math.Min(300, renderSize.Width)) : amount < 1 ? PetModel3D.Render(settings.PetCharacter, settings.Theme, frame, pose, yaw, pitch, walking, Speaking, false, Math.Min(300, renderSize.Width)) : null)
+        using (Bitmap lifted = amount > 0 ? PetModel3D.Render(settings.PetCharacter, settings.Theme, frame, pose, yaw, pitch, false, Speaking, true, Math.Min(300, renderSize.Width), dragMotion.Lean) : null)
+        using (Bitmap bitmap = new Bitmap(renderSize.Width, renderSize.Height, PixelFormat.Format32bppPArgb))
         {
             using (Graphics graphics = Graphics.FromImage(bitmap))
             {
@@ -277,15 +280,16 @@ public sealed class DesktopPet : Form
                     using (ImageAttributes attributes = new ImageAttributes())
                     {
                         ColorMatrix alpha = new ColorMatrix(); alpha.Matrix33 = (float)(layer == 0 ? 1 - amount : amount); attributes.SetColorMatrix(alpha);
-                        graphics.DrawImage(frameImage, new Rectangle(0, 0, Width, Height), 0, 0, frameImage.Width, frameImage.Height, GraphicsUnit.Pixel, attributes);
+                        graphics.DrawImage(frameImage, new Rectangle(Point.Empty, renderSize), 0, 0, frameImage.Width, frameImage.Height, GraphicsUnit.Pixel, attributes);
                     }
                 }
             }
+            if (IsDisposed || !IsHandleCreated || Size != renderSize || WindowState == FormWindowState.Minimized) return;
             IntPtr screen = GetDC(IntPtr.Zero), dc = CreateCompatibleDC(screen), image = bitmap.GetHbitmap(Color.FromArgb(0));
             IntPtr old = SelectObject(dc, image);
             try
             {
-                XY at = new XY(Left, Top), size = new XY(Width, Height), source = new XY(0, 0);
+                XY at = new XY(Left, Top), size = new XY(renderSize.Width, renderSize.Height), source = new XY(0, 0);
                 Blend blend = new Blend { Alpha = 255, Format = 1 };
                 if (!UpdateLayeredWindow(Handle, screen, ref at, ref size, dc, ref source, 0, ref blend, 2)) throw new System.ComponentModel.Win32Exception(Marshal.GetLastWin32Error());
             }

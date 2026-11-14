@@ -386,6 +386,8 @@ public static class PetModel3D
     // 复用真实模型的抬爪姿态，绕屏幕法线转向四边；只裁图像，窗口始终留在可用屏幕内。
     public static Bitmap RenderDocked(int kind, int theme, int frame, int edge, double reveal, int pixelWidth = 200)
     {
+        // 窗口缩放/收起期间可能传入零宽；GDI+不允许创建零尺寸位图。
+        pixelWidth = Math.Max(1, pixelWidth);
         Bitmap result = new Bitmap(pixelWidth, (int)Math.Round(pixelWidth * .95), PixelFormat.Format32bppPArgb);
         using (Bitmap character = Render(kind, theme, frame, 4, 0, 0, false, false, false, pixelWidth))
         using (Graphics g = Graphics.FromImage(result))
@@ -401,6 +403,7 @@ public static class PetModel3D
     }
     public static Bitmap Render(int kind, int theme, int frame, int pose, double yaw, double pitch, bool walking, bool speaking, bool surprised = false, int pixelWidth = 200, double dragLean = 0)
     {
+        pixelWidth = Math.Max(1, pixelWidth);
         if (surprised) pose = 5; // 临时被拎起姿态，不覆盖用户选择的坐/睡/摸鱼/工作状态。
         // 只缓存当前角色和视角的一轮循环。转动相机立即重新进行三维渲染，旧位图及时释放。
         string view = kind + ":" + theme + ":" + yaw.ToString("R", CultureInfo.InvariantCulture) + ":" + pitch.ToString("R", CultureInfo.InvariantCulture) + ":" + pixelWidth;
