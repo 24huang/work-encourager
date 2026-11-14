@@ -28,6 +28,8 @@ public class Settings
     public int OvertimePreset = 120;
     public List<OvertimeEntry> OvertimeEntries = new List<OvertimeEntry>();
     public List<LeaveEntry> LeaveEntries = new List<LeaveEntry>();
+    public List<AbsenceEntry> Absences = new List<AbsenceEntry>();
+    public decimal PersonalLeavePercent = 0, SickLeavePercent = -1, AnnualLeavePercent = 100;
     public bool PetEnabled = true, PetWalk = false;
     public int PetCharacter = 0, PetX = int.MinValue, PetY = int.MinValue;
     public int PetPose = -1;
@@ -35,8 +37,8 @@ public class Settings
     public int PetScale = 100;
     public bool PrivacyMode = false;
     public double PetYaw = 25, PetPitch = 12;
-    public string DetailOrder = "income,rate,progress,countdown,encouragement,month,overtime";
-    public string DetailVisible = "income,rate,progress,countdown,encouragement,month,overtime";
+    public string DetailOrder = "income,rate,progress,countdown,encouragement,month,overtime,absence";
+    public string DetailVisible = "income,rate,progress,countdown,encouragement,month,overtime,absence";
     public bool HoverEnabled = true;
     public string HoverVisible = "income,rate,progress,countdown";
     public string ManualMonth = DateTime.Today.ToString("yyyy-MM");
@@ -46,7 +48,8 @@ public class Settings
     {
         Settings copy = (Settings)MemberwiseClone();
         copy.OvertimeEntries = OvertimeEntries.ConvertAll(delegate(OvertimeEntry entry) { return entry.Copy(); });
-        copy.LeaveEntries = LeaveEntries.ConvertAll(delegate(LeaveEntry entry) { return entry.Copy(); }); return copy;
+        copy.LeaveEntries = LeaveEntries.ConvertAll(delegate(LeaveEntry entry) { return entry.Copy(); });
+        copy.Absences = Absences.ConvertAll(delegate(AbsenceEntry entry) { return entry.Copy(); }); return copy;
     }
     public void Validate()
     {
@@ -75,7 +78,7 @@ public class Settings
         foreach (string key in (HoverVisible ?? "").Split(',')) if (key.Length > 0 && Array.IndexOf(DetailCard.Keys, key) < 0) throw new Exception("悬浮信息配置无效。");
         if (DoubleSaturday.DayOfWeek != DayOfWeek.Saturday)
             throw new Exception("大小周的参考日期请选择一个双休周的周六。");
-        OvertimeClock.Validate(this, DateTime.Now);
+        AbsenceClock.Validate(this); OvertimeClock.Validate(this, DateTime.Now);
     }
 }
 
@@ -87,6 +90,8 @@ public sealed class Snapshot
     public decimal Daily, Earned, PerSecond, MonthEarned;
     public string Status;
     public OvertimeSnapshot Overtime;
+    public AbsenceSnapshot Absence;
+    public double ReminderElapsed;
 }
 
 public static class WorkClock
@@ -141,6 +146,11 @@ public static class WorkClock
         result.MonthEarned = completedDays + (decimal)result.Progress >= result.MonthDays ? s.MonthlySalary : Math.Min(s.MonthlySalary, result.Daily * completedDays + result.Earned);
         result.Status = !result.WorkingDay ? "今日休息" : now < start ? "尚未开工" : now >= end ? "今日已下班" : s.HasBreak && now >= pause && now < resume ? "午休充电中" : "正在积累小确幸";
         result.Overtime = OvertimeClock.At(s, now);
+        result.Absence = result.Overtime.Absence ?? new AbsenceSnapshot();
+        result.ReminderElapsed = Math.Max(0, result.Elapsed - result.Absence.TodayElapsed);
+        result.Earned = Math.Max(0, result.Earned - result.Absence.TodayLoss);
+        result.MonthEarned = Math.Max(0, result.MonthEarned - result.Absence.MonthLoss);
+        if (result.Absence.Active) { result.PerSecond *= result.Absence.ActivePayPercent / 100m; result.Status = AbsenceClock.Names[result.Absence.ActiveKind] + "中"; }
         return result;
     }
     public static bool SummaryDue(Settings settings, DateTime now)
@@ -171,12 +181,13 @@ public sealed class ReminderClock
         { Reset(now); return null; }
         Snapshot current = WorkClock.At(settings, now);
         Snapshot previous = WorkClock.At(settings, last);
-        double delta = Math.Max(0, current.Elapsed + current.Overtime.ElapsedSeconds - previous.Elapsed - previous.Overtime.ElapsedSeconds);
+        double delta = Math.Max(0, current.ReminderElapsed + current.Overtime.ElapsedSeconds - previous.ReminderElapsed - previous.Overtime.ElapsedSeconds);
         last = now;
         if ((!current.WorkingDay || now.TimeOfDay < TimeSpan.Parse(settings.Start) || now.TimeOfDay >= TimeSpan.Parse(settings.End)) && !current.Overtime.Active)
         { waterSeconds = restroomSeconds = 0; return null; }
         if (settings.ReminderMode != 2) waterSeconds += delta;
         if (settings.ReminderMode != 1) restroomSeconds += delta;
+        if (current.Absence.Active) return null;
         if (settings.HasBreak && now.TimeOfDay >= TimeSpan.Parse(settings.BreakStart) && now.TimeOfDay < TimeSpan.Parse(settings.BreakEnd)) return null;
         bool water = settings.ReminderMode != 2 && waterSeconds >= settings.WaterIntervalMinutes * 60;
         bool restroom = settings.ReminderMode != 1 && restroomSeconds >= settings.RestroomIntervalMinutes * 60;
@@ -208,6 +219,10 @@ public static class Storage
             bool previousSix = six.Length == 6 && sixKeys.Count == 6 && !sixKeys.Contains("overtime");
             foreach (string key in six) if (Array.IndexOf(DetailCard.Keys, key) < 0) previousSix = false;
             if (previousSix) s.DetailOrder += ",overtime";
+            string[] seven = s.DetailOrder.Split(','); HashSet<string> sevenKeys = new HashSet<string>(seven);
+            bool previousSeven = seven.Length == 7 && sevenKeys.Count == 7 && !sevenKeys.Contains("absence");
+            foreach (string key in seven) if (Array.IndexOf(DetailCard.Keys, key) < 0) previousSeven = false;
+            if (previousSeven) s.DetailOrder += ",absence";
             s.Validate();
             return s;
         }
@@ -500,6 +515,7 @@ public sealed class Widget : Form
     private Button privacyButton;
     private SettingsForm activeSettingsForm;
     private OvertimeForm activeOvertimeForm;
+    private AbsenceForm activeAbsenceForm;
     private bool privacyHotkey;
     [DllImport("user32.dll")] private static extern bool RegisterHotKey(IntPtr window, int id, uint modifiers, uint key);
     [DllImport("user32.dll")] private static extern bool UnregisterHotKey(IntPtr window, int id);
@@ -533,6 +549,7 @@ public sealed class Widget : Form
         menu.Items.Add("展开 / 收起详情", null, delegate { ToggleDetails(); });
         menu.Items.Add("设置", null, delegate { OpenSettings(); });
         menu.Items.Add("今日加班 / 调休", null, delegate { OpenOvertime(); });
+        menu.Items.Add("请假管理", null, delegate { OpenAbsence(); });
         ToolStripMenuItem privacy = new ToolStripMenuItem("隐私模式 · Ctrl+Alt+P");
         privacy.Click += delegate { TogglePrivacy(); }; menu.Items.Add(privacy);
         ToolStripMenuItem characters = new ToolStripMenuItem("切换桌宠形象");
@@ -707,6 +724,7 @@ public sealed class Widget : Form
             if (key == "income") lines.Add("今日收入：" + (value.PrivacyMode ? "¥ ****" : value.MonthlySalary == 0 ? "请先设置薪资" : "¥ " + current.Earned.ToString("N2")));
             else if (key == "month") lines.Add("本月累计：" + (value.PrivacyMode ? "¥ ****" : value.MonthlySalary == 0 ? "请先设置薪资" : "¥ " + current.MonthEarned.ToString("N2")));
             else if (key == "overtime") lines.Add(OvertimeClock.Text(value, current.Overtime));
+            else if (key == "absence") lines.Add("今日计划请假 " + (current.Absence.TodaySeconds / 3600).ToString("0.##") + " 小时，自动调休 " + (current.Absence.UsedToday / 60m).ToString("0.#") + " 小时" + (value.PrivacyMode ? "（扣款隐藏）" : "，截至当前少计 ¥ " + current.Absence.TodayLoss.ToString("N2")));
             else if (key == "rate") lines.Add("每秒收入：" + (value.PrivacyMode ? "¥ ****" : value.MonthlySalary == 0 ? "—" : "¥ " + current.PerSecond.ToString(current.PerSecond >= .0001m ? "0.0000" : "0.0000########")));
             else if (key == "progress") lines.Add("上班进度：" + current.Progress.ToString("P1"));
             else if (key == "countdown") lines.Add("剩余工时：" + (current.WorkingDay ? string.Format("{0:00}:{1:00}:{2:00}", (int)(current.Remaining / 3600), (int)(current.Remaining / 60) % 60, (int)current.Remaining % 60) : "今日休息"));
@@ -718,6 +736,7 @@ public sealed class Widget : Form
     {
         Snapshot current = WorkClock.At(value, now);
         string message = value.PrivacyMode ? "下班啦！今日收入已隐藏，辛苦了。" : "你今日赚了 ¥" + current.Earned.ToString("N2") + "（估算）。";
+        if (current.Absence.TodaySeconds > 0) message += "\n今日请假 " + (current.Absence.TodaySeconds / 3600).ToString("0.##") + " 小时，自动调休 " + (current.Absence.UsedToday / 60m).ToString("0.#") + " 小时。";
         return current.Overtime.Planned ? message + "\n" + OvertimeClock.Text(value, current.Overtime) : message;
     }
     public void TogglePrivacy()
@@ -728,6 +747,7 @@ public sealed class Widget : Form
         settings = next;
         if (activeSettingsForm != null && !activeSettingsForm.IsDisposed) activeSettingsForm.ApplyPrivacy(next.PrivacyMode);
         if (activeOvertimeForm != null && !activeOvertimeForm.IsDisposed) activeOvertimeForm.ApplyPrivacy(next.PrivacyMode);
+        if (activeAbsenceForm != null && !activeAbsenceForm.IsDisposed) activeAbsenceForm.ApplyPrivacy(next.PrivacyMode);
         Snapshot current = WorkClock.At(settings, DateTime.Now);
         foreach (Control control in detailBody.Controls) { DetailCard field = control as DetailCard; if (field != null) field.UpdateView(settings, current); }
         if (hoverPopup != null && !hoverPopup.IsDisposed) hoverPopup.SetMessage(BuildHoverMessage(settings, DateTime.Now));
@@ -757,9 +777,10 @@ public sealed class Widget : Form
             {
                 Rectangle area = Screen.FromRectangle(Bounds).WorkingArea;
                 Location = new Point(Math.Max(area.Left, Math.Min(Left, area.Right - Width)), Math.Max(area.Top, Math.Min(Top, area.Bottom - Height)));
-                if (activeSettingsForm != null && !activeSettingsForm.IsDisposed)
+                foreach (Form dialog in new Form[] { activeSettingsForm, activeOvertimeForm, activeAbsenceForm })
                 {
-                    Form dialog = activeSettingsForm; Rectangle available = Screen.FromRectangle(dialog.Bounds).WorkingArea;
+                    if (dialog == null || dialog.IsDisposed) continue;
+                    Rectangle available = Screen.FromRectangle(dialog.Bounds).WorkingArea;
                     dialog.Height = Math.Min(dialog.Height, Math.Max(100, available.Height - 20));
                     dialog.Location = new Point(Math.Max(available.Left, Math.Min(dialog.Left, available.Right - dialog.Width)), Math.Max(available.Top, Math.Min(dialog.Top, available.Bottom - dialog.Height)));
                 }
@@ -892,6 +913,7 @@ public sealed class Widget : Form
     }
     private void OpenSettings()
     {
+        if (activeAbsenceForm != null && !activeAbsenceForm.IsDisposed) { activeAbsenceForm.Activate(); return; }
         if (activeOvertimeForm != null && !activeOvertimeForm.IsDisposed) { activeOvertimeForm.Activate(); return; }
         if (activeSettingsForm != null && !activeSettingsForm.IsDisposed) { activeSettingsForm.Activate(); return; }
         ShowHoverInfo(false);
@@ -913,6 +935,7 @@ public sealed class Widget : Form
     }
     private void OpenOvertime()
     {
+        if (activeAbsenceForm != null && !activeAbsenceForm.IsDisposed) { activeAbsenceForm.Activate(); return; }
         if (activeSettingsForm != null && !activeSettingsForm.IsDisposed) { activeSettingsForm.Activate(); return; }
         if (activeOvertimeForm != null && !activeOvertimeForm.IsDisposed) { activeOvertimeForm.Activate(); return; }
         ShowHoverInfo(false); bool wasVisible = Visible;
@@ -928,6 +951,28 @@ public sealed class Widget : Form
         finally
         {
             activeOvertimeForm = null; TopMost = settings.AlwaysOnTop;
+            if (pet != null) { pet.Paused = false; pet.Enabled = true; } ApplyPet();
+            if (!wasVisible && settings.PetEnabled) Hide();
+        }
+    }
+    private void OpenAbsence()
+    {
+        if (activeSettingsForm != null && !activeSettingsForm.IsDisposed) { activeSettingsForm.Activate(); return; }
+        if (activeOvertimeForm != null && !activeOvertimeForm.IsDisposed) { activeOvertimeForm.Activate(); return; }
+        if (activeAbsenceForm != null && !activeAbsenceForm.IsDisposed) { activeAbsenceForm.Activate(); return; }
+        ShowHoverInfo(false); bool wasVisible = Visible;
+        Show(); TopMost = false; if (pet != null) { pet.Paused = true; pet.Enabled = false; }
+        try
+        {
+            using (AbsenceForm form = new AbsenceForm(settings, delegate { return settings; }))
+            {
+                activeAbsenceForm = form; form.TopMost = settings.AlwaysOnTop;
+                if (form.ShowDialog(this) == DialogResult.OK) { settings = form.Result; RebuildComponents(); reminderClock.Reset(DateTime.Now); }
+            }
+        }
+        finally
+        {
+            activeAbsenceForm = null; TopMost = settings.AlwaysOnTop;
             if (pet != null) { pet.Paused = false; pet.Enabled = true; } ApplyPet();
             if (!wasVisible && settings.PetEnabled) Hide();
         }
@@ -1011,9 +1056,33 @@ public static class Program
         {
             Tests.Run(); return;
         }
+        if (args.Length > 0 && args[0] == "--leave-preview")
+        {
+            for (int theme = 0; theme < 2; theme++)
+            {
+                Settings demo = new Settings { MonthlySalary = 8800, Theme = theme, DailySummaryEnabled = false, PetEnabled = false, WorkMode = 0, SingleRest = ((int)DateTime.Today.DayOfWeek + 1) % 7, DetailOrder = "absence,income,rate,progress,countdown,encouragement,month,overtime", DetailVisible = "absence,income" };
+                demo.Absences.Add(new AbsenceEntry { From = DateTime.Today.AddHours(9), Until = DateTime.Today.AddHours(11), Kind = 0, PayPercent = 0 });
+                demo.OvertimeEntries.Add(new OvertimeEntry { Start = DateTime.Today.AddDays(-1).AddHours(18), Minutes = 60, HourlyRate = 50 });
+                using (AbsenceForm preview = new AbsenceForm(demo))
+                {
+                    preview.Opacity = 0; preview.Show(); preview.Hide(); preview.Show(); Application.DoEvents();
+                    using (Bitmap bitmap = new Bitmap(preview.Width, preview.Height)) { preview.DrawToBitmap(bitmap, new Rectangle(0, 0, preview.Width, preview.Height)); bitmap.Save(Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "leave-settings-" + theme + ".png")); }
+                    preview.Hide();
+                }
+                using (Widget preview = new Widget(demo))
+                {
+                    preview.Opacity = 0; preview.Show(); Application.DoEvents();
+                    foreach (Control card in preview.Controls.Find("Detail_absence", true)) ((DetailCard)card).UpdateView(demo, WorkClock.At(demo, DateTime.Today.AddHours(18)));
+                    foreach (Control card in preview.Controls.Find("Detail_income", true)) ((DetailCard)card).UpdateView(demo, WorkClock.At(demo, DateTime.Today.AddHours(18)));
+                    using (Bitmap bitmap = new Bitmap(preview.Width, preview.Height)) { preview.DrawToBitmap(bitmap, preview.ClientRectangle); ApplyWindowRegion(preview, bitmap); bitmap.Save(Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "leave-component-" + theme + ".png")); }
+                    preview.Hide();
+                }
+            }
+            return;
+        }
         if (args.Length > 0 && args[0] == "--preview")
         {
-            Settings overtimeDemo = new Settings { MonthlySalary = 8800, DailySummaryEnabled = false, PetEnabled = false, DetailOrder = "overtime,income,rate,progress,countdown,encouragement,month", DetailVisible = "overtime,income" };
+            Settings overtimeDemo = new Settings { MonthlySalary = 8800, DailySummaryEnabled = false, PetEnabled = false, DetailOrder = "overtime,income,rate,progress,countdown,encouragement,month,absence", DetailVisible = "overtime,income" };
             overtimeDemo.OvertimeEntries.Add(new OvertimeEntry { Start = DateTime.Today.AddDays(-1).AddHours(18), Minutes = 120, HourlyRate = 50 });
             using (OvertimeForm preview = new OvertimeForm(overtimeDemo))
             {
@@ -1028,7 +1097,7 @@ public static class Program
                 preview.Hide();
             }
             for (int privacy = 0; privacy < 2; privacy++)
-            using (Widget preview = new Widget(new Settings { MonthlySalary = 8800, PrivacyMode = privacy == 1, DailySummaryEnabled = false, PetEnabled = false, DetailOrder = "month,income,rate,progress,countdown,encouragement,overtime", DetailVisible = "month,income,progress" }))
+            using (Widget preview = new Widget(new Settings { MonthlySalary = 8800, PrivacyMode = privacy == 1, DailySummaryEnabled = false, PetEnabled = false, DetailOrder = "month,income,rate,progress,countdown,encouragement,overtime,absence", DetailVisible = "month,income,progress" }))
             {
                 preview.Opacity = 0; preview.Show(); Application.DoEvents();
                 using (Bitmap image = new Bitmap(preview.Width, preview.Height)) { preview.DrawToBitmap(image, preview.ClientRectangle); ApplyWindowRegion(preview, image); image.Save(Path.Combine(AppDomain.CurrentDomain.BaseDirectory, privacy == 0 ? "monthly-preview.png" : "monthly-private-preview.png")); }
@@ -1710,7 +1779,7 @@ public static class Tests
             string oldOrder = "countdown,progress,rate,income,encouragement";
             File.WriteAllText(Storage.PathName, "<Settings><MonthlySalary>8800</MonthlySalary><DetailOrder>" + oldOrder + "</DetailOrder><DetailVisible>rate,progress</DetailVisible><HoverVisible>countdown</HoverVisible></Settings>");
             Settings migrated = Storage.Load();
-            check(migrated.DetailOrder == oldOrder + ",month,overtime" && migrated.DetailVisible == "rate,progress" && migrated.HoverVisible == "countdown", "Legacy component migration preserves custom order, hidden fields and hover selection");
+            check(migrated.DetailOrder == oldOrder + ",month,overtime,absence" && migrated.DetailVisible == "rate,progress" && migrated.HoverVisible == "countdown", "Legacy component migration preserves custom order, hidden fields and hover selection");
             Storage.Save(migrated); check(Storage.Load().DetailOrder == migrated.DetailOrder, "Monthly component migration is idempotent after saving");
             monthly = new Settings { MonthlySalary = 8800, PetEnabled = false, DailySummaryEnabled = false, PrivacyMode = true, HoverVisible = "month,progress" };
             Storage.Save(monthly);
@@ -1737,7 +1806,7 @@ public static class Tests
                 while (!popup.IsDisposed && waiting.Elapsed.TotalSeconds < 17) { Application.DoEvents(); Thread.Sleep(25); }
                 check(popup.IsDisposed && waiting.Elapsed.TotalSeconds >= 14, "Popup automatically dismisses after fifteen seconds");
             }
-            OvertimeTests.Run(check);
+            OvertimeTests.Run(check); AbsenceTests.Run(check);
             report.AppendLine("All " + checks + " checks passed.");
         }
         catch (Exception ex) { report.AppendLine(ex.ToString()); Environment.ExitCode = 1; }

@@ -19,6 +19,7 @@ public class LeaveEntry
 {
     public DateTime Date;
     public int Minutes;
+    public DateTime RegisteredAt;
     public LeaveEntry Copy() { return (LeaveEntry)MemberwiseClone(); }
 }
 public sealed class OvertimeSnapshot
@@ -28,6 +29,7 @@ public sealed class OvertimeSnapshot
     public decimal TodayValue, BalanceValue;
     public bool Active, Deficit, Planned;
     public DateTime LastEnd;
+    public AbsenceSnapshot Absence;
 }
 public static class OvertimeClock
 {
@@ -35,7 +37,7 @@ public static class OvertimeClock
     {
         OvertimeSnapshot result = new OvertimeSnapshot();
         int used = 0;
-        foreach (LeaveEntry entry in settings.LeaveEntries) if (entry.Date.Date <= now.Date) used += entry.Minutes;
+        foreach (LeaveEntry entry in settings.LeaveEntries) if (entry.Date.Date <= now.Date && (entry.RegisteredAt == DateTime.MinValue || entry.Date.Date != entry.RegisteredAt.Date || entry.RegisteredAt <= now)) used += entry.Minutes;
         List<OvertimeEntry> ordered = new List<OvertimeEntry>(settings.OvertimeEntries);
         ordered.Sort(delegate(OvertimeEntry a, OvertimeEntry b) { return a.Start.CompareTo(b.Start); });
         foreach (OvertimeEntry entry in ordered)
@@ -54,7 +56,12 @@ public static class OvertimeClock
             result.BalanceMinutes += credited - consumed;
             result.BalanceValue += entry.HourlyRate * (credited - consumed) / 60m;
         }
-        result.Deficit = used > 0; return result;
+        result.Deficit = used > 0;
+        if (settings.Absences.Count > 0)
+        {
+            result.Absence = AbsenceClock.At(settings, now); result.BalanceMinutes = result.Absence.BalanceMinutes; result.BalanceValue = result.Absence.BalanceValue; result.Deficit = result.Absence.Deficit;
+        }
+        return result;
     }
     public static void Validate(Settings settings, DateTime now)
     {
@@ -152,7 +159,7 @@ public sealed class OvertimeForm : Form
         };
         use.Click += delegate
         {
-            try { Settings next = draft.Copy(); next.LeaveEntries.Add(new LeaveEntry { Date = leaveDate.Value.Date, Minutes = (int)leaveMinutes.Value }); OvertimeClock.Validate(next, DateTime.Now); draft.LeaveEntries = next.LeaveEntries; RefreshRecords(); }
+            try { Settings next = draft.Copy(); next.LeaveEntries.Add(new LeaveEntry { Date = leaveDate.Value.Date, Minutes = (int)leaveMinutes.Value, RegisteredAt = DateTime.Now }); OvertimeClock.Validate(next, DateTime.Now); draft.LeaveEntries = next.LeaveEntries; RefreshRecords(); }
             catch (Exception ex) { MessageBox.Show(this, ex.Message, "调休未登记"); }
         };
         undo.Click += delegate { if (leaveList.SelectedIndex >= 0) { draft.LeaveEntries.RemoveAt(leaveList.SelectedIndex); RefreshRecords(); } };
