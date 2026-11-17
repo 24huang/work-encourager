@@ -516,6 +516,7 @@ public sealed class Widget : Form
     private SettingsForm activeSettingsForm;
     private OvertimeForm activeOvertimeForm;
     private AbsenceForm activeAbsenceForm;
+    private CommandMemoForm commandMemo;
     private bool privacyHotkey;
     [DllImport("user32.dll")] private static extern bool RegisterHotKey(IntPtr window, int id, uint modifiers, uint key);
     [DllImport("user32.dll")] private static extern bool UnregisterHotKey(IntPtr window, int id);
@@ -550,6 +551,15 @@ public sealed class Widget : Form
         menu.Items.Add("设置", null, delegate { OpenSettings(); });
         menu.Items.Add("今日加班 / 调休", null, delegate { OpenOvertime(); });
         menu.Items.Add("请假管理", null, delegate { OpenAbsence(); });
+        menu.Items.Add("命令备忘录", null, delegate
+        {
+            try
+            {
+                if (commandMemo == null || commandMemo.IsDisposed) commandMemo = new CommandMemoForm(settings.Theme);
+                ShowHoverInfo(false); commandMemo.Show(this); commandMemo.WindowState = FormWindowState.Normal; commandMemo.Activate();
+            }
+            catch (Exception ex) { MessageBox.Show(this, "备忘录打开失败，原文件保留。\n" + ex.Message, "命令备忘录"); }
+        });
         ToolStripMenuItem privacy = new ToolStripMenuItem("隐私模式 · Ctrl+Alt+P");
         privacy.Click += delegate { TogglePrivacy(); }; menu.Items.Add(privacy);
         ToolStripMenuItem characters = new ToolStripMenuItem("切换桌宠形象");
@@ -1002,6 +1012,11 @@ public sealed class Widget : Form
     protected override void OnFormClosing(FormClosingEventArgs e)
     {
         if (!exiting && e.CloseReason == CloseReason.UserClosing) { e.Cancel = true; Hide(); return; }
+        if (commandMemo != null && !commandMemo.IsDisposed)
+        {
+            commandMemo.Close();
+            if (!commandMemo.IsDisposed) { e.Cancel = true; exiting = false; return; }
+        }
         SaveLocation(); base.OnFormClosing(e);
     }
     protected override void Dispose(bool disposing)
@@ -1806,7 +1821,7 @@ public static class Tests
                 while (!popup.IsDisposed && waiting.Elapsed.TotalSeconds < 17) { Application.DoEvents(); Thread.Sleep(25); }
                 check(popup.IsDisposed && waiting.Elapsed.TotalSeconds >= 14, "Popup automatically dismisses after fifteen seconds");
             }
-            OvertimeTests.Run(check); AbsenceTests.Run(check); PetInputTests.Run(check);
+            OvertimeTests.Run(check); AbsenceTests.Run(check); PetInputTests.Run(check); CommandMemoTests.Run(check);
             report.AppendLine("All " + checks + " checks passed.");
         }
         catch (Exception ex) { report.AppendLine(ex.ToString()); Environment.ExitCode = 1; }
