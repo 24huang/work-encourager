@@ -49,7 +49,8 @@ public sealed class DetailCard : Control
     }
     public static int CardHeight(string key, bool mini)
     {
-        if (key == "income" || key == "month") return mini ? 64 : 76;
+        if (key == "income") return mini ? 84 : 96;
+        if (key == "month") return mini ? 64 : 76;
         if (key == "overtime") return mini ? 102 : 110;
         if (key == "absence") return mini ? 110 : 116;
         if (key == "hours") return 158;
@@ -83,9 +84,10 @@ public sealed class DetailCard : Control
         if (Key == "income" || Key == "month")
         {
             decimal earned = Key == "month" ? snapshot.MonthEarned : snapshot.Earned;
-            string amount = settings.PrivacyMode ? "¥ ****" : settings.MonthlySalary == 0 ? "¥ —" : "¥ " + earned.ToString("N2");
-            Widget.Write(g, amount, settings.PrivacyMode ? mini ? 23 : 27 : earned >= 1000000 ? 13 : earned >= 100000 ? 17 : mini ? 23 : 27, ink, new RectangleF(8, 22, Width - 16, Height - 23), FontStyle.Bold, StringAlignment.Near);
-            Widget.Write(g, Key == "month" ? "本月估算" : "估算", 7, muted, new RectangleF(Width - 57, Height - 23, 44, 16), FontStyle.Regular, StringAlignment.Far);
+            string amount = settings.PrivacyMode ? "¥ ****" : settings.MonthlySalary == 0 && earned == 0 ? "¥ —" : "¥ " + earned.ToString("N2");
+            Widget.Write(g, amount, settings.PrivacyMode ? mini ? 23 : 27 : earned >= 1000000 ? 13 : earned >= 100000 ? 17 : mini ? 23 : 27, ink, new RectangleF(8, 22, Width - 16, Height - (Key == "income" ? 47 : 23)), FontStyle.Bold, StringAlignment.Near);
+            if (Key == "income") Widget.Write(g, settings.PrivacyMode ? "已计入的加班金额已隐藏" : "含未调休加班 ¥ " + snapshot.Overtime.TodayAvailableValue.ToString("N2"), 8, accent, new RectangleF(10, Height - 26, Width - 20, 21), FontStyle.Regular, StringAlignment.Near);
+            else Widget.Write(g, "本月估算", 7, muted, new RectangleF(Width - 57, Height - 23, 44, 16), FontStyle.Regular, StringAlignment.Far);
         }
         else if (Key == "hours")
         {

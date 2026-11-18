@@ -26,7 +26,7 @@ public sealed class OvertimeSnapshot
 {
     public double ElapsedSeconds;
     public int TodayMinutes, BalanceMinutes, MonthMinutes, MonthUsedMinutes;
-    public decimal TodayValue, BalanceValue;
+    public decimal TodayValue, BalanceValue, TodayAvailableValue;
     public bool Active, Deficit, Planned;
     public DateTime LastEnd;
     public AbsenceSnapshot Absence;
@@ -57,11 +57,12 @@ public static class OvertimeClock
             int consumed = Math.Min(used, credited); used -= consumed;
             result.BalanceMinutes += credited - consumed;
             result.BalanceValue += entry.HourlyRate * (credited - consumed) / 60m;
+            if (entry.Start.Date == now.Date) result.TodayAvailableValue += entry.HourlyRate * (credited - consumed) / 60m;
         }
         result.Deficit = used > 0;
         if (settings.Absences.Count > 0)
         {
-            result.Absence = AbsenceClock.At(settings, now); result.BalanceMinutes = result.Absence.BalanceMinutes; result.BalanceValue = result.Absence.BalanceValue; result.Deficit = result.Absence.Deficit; result.MonthUsedMinutes = result.Absence.MonthUsedMinutes;
+            result.Absence = AbsenceClock.At(settings, now); result.BalanceMinutes = result.Absence.BalanceMinutes; result.BalanceValue = result.Absence.BalanceValue; result.Deficit = result.Absence.Deficit; result.MonthUsedMinutes = result.Absence.MonthUsedMinutes; result.TodayAvailableValue = result.Absence.TodayOvertimeValue;
         }
         return result;
     }

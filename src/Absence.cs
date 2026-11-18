@@ -18,7 +18,7 @@ public sealed class AbsenceSnapshot
     public decimal TodayLoss, MonthLoss, ActivePayPercent = 100;
     public bool Active, Deficit;
     public int ActiveKind, UsedToday, BalanceMinutes, MonthRetroMinutes, MonthUsedMinutes;
-    public decimal BalanceValue;
+    public decimal BalanceValue, TodayOvertimeValue;
 }
 public static class AbsenceClock
 {
@@ -115,7 +115,11 @@ public static class AbsenceClock
                 if (begin.Year == now.Year && begin.Month == now.Month) result.MonthRetroMinutes += 30;
             }
         result.Deficit = debt > 0; result.BalanceMinutes = available;
-        foreach (Event credit in credits) result.BalanceValue += credit.Rate * credit.Minutes / 60m;
+        foreach (Event credit in credits)
+        {
+            decimal value = credit.Rate * credit.Minutes / 60m; result.BalanceValue += value;
+            if (credit.When.Date == now.Date) result.TodayOvertimeValue += value;
+        }
         // Covered统一包含发生时抵扣与之后补抵；每块只统计一次，补抵不再另加到已用调休。
         foreach (Block block in blocks) if (block.Covered && block.Pieces[0].From.Year == now.Year && block.Pieces[0].From.Month == now.Month) result.MonthUsedMinutes += 30;
         double dailySeconds = (TimeSpan.Parse(s.End) - TimeSpan.Parse(s.Start)).TotalSeconds - (s.HasBreak ? (TimeSpan.Parse(s.BreakEnd) - TimeSpan.Parse(s.BreakStart)).TotalSeconds : 0);

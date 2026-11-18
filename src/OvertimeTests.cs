@@ -55,7 +55,7 @@ public static class OvertimeTests
         schedule.OvertimeEntries[1].Minutes = 90;
         check(!WorkClock.SummaryDue(schedule, start.AddHours(4)) && WorkClock.SummaryDue(schedule, start.AddHours(4.5)), "Extending already-summarized overtime schedules one updated summary at the new end");
         Snapshot normal = WorkClock.At(schedule, start.AddHours(4.5));
-        check(normal.Earned == 400 && normal.MonthEarned == 400, "Overtime and leave never merge into normal daily or monthly earnings");
+        check(normal.NormalEarned == 400 && normal.Earned == 575 && normal.MonthEarned == 400, "Today includes unused overtime while regular pay and the existing monthly calculation remain separate");
         ReminderClock reminders = new ReminderClock(start.AddMinutes(-30));
         check(reminders.Poll(schedule, start) != null && reminders.Poll(schedule, start.AddMinutes(30)) != null, "Health reminders continue across regular clock-out into overtime");
         check(reminders.Poll(schedule, start.AddHours(2.5)) == null, "Health reminders pause during a gap between overtime segments");

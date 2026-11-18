@@ -87,7 +87,7 @@ public sealed class Snapshot
     public bool WorkingDay;
     public double Total, Elapsed, Progress, Remaining;
     public int MonthDays;
-    public decimal Daily, Earned, PerSecond, MonthEarned;
+    public decimal Daily, Earned, PerSecond, MonthEarned, NormalEarned;
     public string Status;
     public OvertimeSnapshot Overtime;
     public AbsenceSnapshot Absence;
@@ -150,6 +150,9 @@ public static class WorkClock
         result.ReminderElapsed = Math.Max(0, result.Elapsed - result.Absence.TodayElapsed);
         result.Earned = Math.Max(0, result.Earned - result.Absence.TodayLoss);
         result.MonthEarned = Math.Max(0, result.MonthEarned - result.Absence.MonthLoss);
+        // 只合计当日尚未用于调休的加班信用；已补回请假工资的部分不能重复加入。
+        result.NormalEarned = result.Earned;
+        result.Earned += result.Overtime.TodayAvailableValue;
         if (result.Absence.Active) { result.PerSecond *= result.Absence.ActivePayPercent / 100m; result.Status = AbsenceClock.Names[result.Absence.ActiveKind] + "中"; }
         return result;
     }
@@ -739,7 +742,7 @@ public sealed class Widget : Form
         foreach (string key in DetailCard.Keys)
         {
             if (!selected.Contains(key)) continue;
-            if (key == "income") lines.Add("今日收入：" + (value.PrivacyMode ? "¥ ****" : value.MonthlySalary == 0 ? "请先设置薪资" : "¥ " + current.Earned.ToString("N2")));
+            if (key == "income") lines.Add("今日收入：" + (value.PrivacyMode ? "¥ ****" : value.MonthlySalary == 0 && current.Earned == 0 ? "请先设置薪资" : "¥ " + current.Earned.ToString("N2")));
             else if (key == "month") lines.Add("本月累计：" + (value.PrivacyMode ? "¥ ****" : value.MonthlySalary == 0 ? "请先设置薪资" : "¥ " + current.MonthEarned.ToString("N2")));
             else if (key == "overtime") lines.Add(OvertimeClock.Text(value, current.Overtime));
             else if (key == "hours") lines.Add("本月请假：" + (current.Absence.MonthElapsedSeconds / 3600).ToString("0.##") + " 小时\n本月已完成加班：" + (current.Overtime.MonthMinutes / 60m).ToString("0.#") + " 小时\n本月已用调休：" + (current.Overtime.MonthUsedMinutes / 60m).ToString("0.#") + " 小时\n当前可调休：" + (current.Overtime.BalanceMinutes / 60m).ToString("0.#") + " 小时\n本月未抵扣请假：" + (current.Absence.MonthUncoveredSeconds / 3600).ToString("0.##") + " 小时");
@@ -755,6 +758,7 @@ public sealed class Widget : Form
     {
         Snapshot current = WorkClock.At(value, now);
         string message = value.PrivacyMode ? "下班啦！今日收入已隐藏，辛苦了。" : "你今日赚了 ¥" + current.Earned.ToString("N2") + "（估算）。";
+        if (current.Overtime.Planned && !value.PrivacyMode) message += "\n其中未调休加班 ¥ " + current.Overtime.TodayAvailableValue.ToString("N2") + "（已计入）。";
         if (current.Absence.TodaySeconds > 0) message += "\n今日请假 " + (current.Absence.TodaySeconds / 3600).ToString("0.##") + " 小时，自动调休 " + (current.Absence.UsedToday / 60m).ToString("0.#") + " 小时。";
         return current.Overtime.Planned ? message + "\n" + OvertimeClock.Text(value, current.Overtime) : message;
     }
@@ -1830,7 +1834,7 @@ public static class Tests
                 while (!popup.IsDisposed && waiting.Elapsed.TotalSeconds < 17) { Application.DoEvents(); Thread.Sleep(25); }
                 check(popup.IsDisposed && waiting.Elapsed.TotalSeconds >= 14, "Popup automatically dismisses after fifteen seconds");
             }
-            OvertimeTests.Run(check); AbsenceTests.Run(check); PetInputTests.Run(check); CommandMemoTests.Run(check); RetroTimeOffTests.Run(check); MonthHoursTests.Run(check);
+            OvertimeTests.Run(check); AbsenceTests.Run(check); PetInputTests.Run(check); CommandMemoTests.Run(check); RetroTimeOffTests.Run(check); MonthHoursTests.Run(check); TodayIncomeTests.Run(check);
             report.AppendLine("All " + checks + " checks passed.");
         }
         catch (Exception ex) { report.AppendLine(ex.ToString()); Environment.ExitCode = 1; }
