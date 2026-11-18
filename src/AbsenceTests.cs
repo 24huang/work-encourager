@@ -75,7 +75,7 @@ public static class AbsenceTests
         // Save directly to emulate the preceding release, whose seven-component schema predates this validator.
         using (System.IO.FileStream stream = System.IO.File.Create(Storage.PathName)) new System.Xml.Serialization.XmlSerializer(typeof(Settings)).Serialize(stream, seven);
         loaded = Storage.Load();
-        check(loaded.DetailOrder == seven.DetailOrder + ",absence" && loaded.DetailVisible == seven.DetailVisible && loaded.Absences.Count == 0, "Upgrading the seven-component release preserves hidden fields and appends the leave component");
+        check(loaded.DetailOrder == "hours," + seven.DetailOrder + ",absence" && loaded.DetailVisible == "hours," + seven.DetailVisible && loaded.Absences.Count == 0, "Upgrading the seven-component release preserves hidden fields and appends the leave component");
         paid.RemindersEnabled = true; ReminderClock reminders = new ReminderClock(day.AddHours(8.5));
         check(reminders.Poll(paid, day.AddHours(10)) == null && reminders.Poll(paid, day.AddHours(11)) == null, "Health reminders stay silent throughout paid leave without accumulating its time");
         check(reminders.Poll(paid, day.AddHours(11.5)) != null, "Health reminders resume after thirty minutes of actual work following leave");

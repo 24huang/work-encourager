@@ -25,7 +25,7 @@ public class LeaveEntry
 public sealed class OvertimeSnapshot
 {
     public double ElapsedSeconds;
-    public int TodayMinutes, BalanceMinutes;
+    public int TodayMinutes, BalanceMinutes, MonthMinutes, MonthUsedMinutes;
     public decimal TodayValue, BalanceValue;
     public bool Active, Deficit, Planned;
     public DateTime LastEnd;
@@ -37,13 +37,15 @@ public static class OvertimeClock
     {
         OvertimeSnapshot result = new OvertimeSnapshot();
         int used = 0;
-        foreach (LeaveEntry entry in settings.LeaveEntries) if (entry.Date.Date <= now.Date && (entry.RegisteredAt == DateTime.MinValue || entry.Date.Date != entry.RegisteredAt.Date || entry.RegisteredAt <= now)) used += entry.Minutes;
+        foreach (LeaveEntry entry in settings.LeaveEntries) if (entry.Date.Date <= now.Date && (entry.RegisteredAt == DateTime.MinValue || entry.Date.Date != entry.RegisteredAt.Date || entry.RegisteredAt <= now))
+        { used += entry.Minutes; if (entry.Date.Year == now.Year && entry.Date.Month == now.Month) result.MonthUsedMinutes += entry.Minutes; }
         List<OvertimeEntry> ordered = new List<OvertimeEntry>(settings.OvertimeEntries);
         ordered.Sort(delegate(OvertimeEntry a, OvertimeEntry b) { return a.Start.CompareTo(b.Start); });
         foreach (OvertimeEntry entry in ordered)
         {
             double seconds = Math.Max(0, Math.Min((entry.End - entry.Start).TotalSeconds, (now - entry.Start).TotalSeconds));
             int credited = (int)(seconds / 1800) * 30;
+            if (entry.Start.Year == now.Year && entry.Start.Month == now.Month) result.MonthMinutes += credited;
             if (entry.Start.Date == now.Date)
             {
                 result.Planned = true; result.ElapsedSeconds += seconds;
@@ -59,7 +61,7 @@ public static class OvertimeClock
         result.Deficit = used > 0;
         if (settings.Absences.Count > 0)
         {
-            result.Absence = AbsenceClock.At(settings, now); result.BalanceMinutes = result.Absence.BalanceMinutes; result.BalanceValue = result.Absence.BalanceValue; result.Deficit = result.Absence.Deficit;
+            result.Absence = AbsenceClock.At(settings, now); result.BalanceMinutes = result.Absence.BalanceMinutes; result.BalanceValue = result.Absence.BalanceValue; result.Deficit = result.Absence.Deficit; result.MonthUsedMinutes = result.Absence.MonthUsedMinutes;
         }
         return result;
     }

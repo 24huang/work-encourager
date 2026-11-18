@@ -5,8 +5,8 @@ using System.Windows.Forms;
 
 public sealed class DetailCard : Control
 {
-    public static readonly string[] Keys = { "income", "rate", "progress", "countdown", "encouragement", "month", "overtime", "absence" };
-    public static readonly string[] Titles = { "今日收入", "每秒收入", "上班进度", "剩余有效工时", "鼓励语", "本月累计", "加班与调休", "请假记录" };
+    public static readonly string[] Keys = { "income", "rate", "progress", "countdown", "encouragement", "month", "overtime", "absence", "hours" };
+    public static readonly string[] Titles = { "今日收入", "每秒收入", "上班进度", "剩余有效工时", "鼓励语", "本月累计", "加班与调休", "请假记录", "本月工时统计" };
     private static readonly string[] Phrases = { "每一点努力，都在靠近生活的小目标。", "工作有进度，生活也要留一点甜。", "认真上班，也记得适时起身喝水。" };
     public static string EncouragementAt(DateTime now) { return Phrases[(now.DayOfYear + now.Hour / 2) % Phrases.Length]; }
     public readonly string Key;
@@ -52,6 +52,7 @@ public sealed class DetailCard : Control
         if (key == "income" || key == "month") return mini ? 64 : 76;
         if (key == "overtime") return mini ? 102 : 110;
         if (key == "absence") return mini ? 110 : 116;
+        if (key == "hours") return 158;
         if (key == "rate") return mini ? 44 : 48;
         if (key == "progress") return mini ? 56 : 64;
         if (key == "countdown") return mini ? 60 : 68;
@@ -85,6 +86,16 @@ public sealed class DetailCard : Control
             string amount = settings.PrivacyMode ? "¥ ****" : settings.MonthlySalary == 0 ? "¥ —" : "¥ " + earned.ToString("N2");
             Widget.Write(g, amount, settings.PrivacyMode ? mini ? 23 : 27 : earned >= 1000000 ? 13 : earned >= 100000 ? 17 : mini ? 23 : 27, ink, new RectangleF(8, 22, Width - 16, Height - 23), FontStyle.Bold, StringAlignment.Near);
             Widget.Write(g, Key == "month" ? "本月估算" : "估算", 7, muted, new RectangleF(Width - 57, Height - 23, 44, 16), FontStyle.Regular, StringAlignment.Far);
+        }
+        else if (Key == "hours")
+        {
+            string[] labels = { "本月请假（已发生）", "本月加班（已完成）", "本月已用调休", "当前可调休余额", "本月未抵扣请假" };
+            string[] values = { (snapshot.Absence.MonthElapsedSeconds / 3600).ToString("0.##"), (snapshot.Overtime.MonthMinutes / 60m).ToString("0.#"), (snapshot.Overtime.MonthUsedMinutes / 60m).ToString("0.#"), (snapshot.Overtime.BalanceMinutes / 60m).ToString("0.#"), (snapshot.Absence.MonthUncoveredSeconds / 3600).ToString("0.##") };
+            for (int row = 0; row < labels.Length; row++)
+            {
+                Widget.Write(g, labels[row], 8, muted, new RectangleF(10, 25 + row * 25, Width - 78, 23), FontStyle.Regular, StringAlignment.Near);
+                Widget.Write(g, values[row] + " 小时", 10, row < 3 ? ink : accent, new RectangleF(Width - 100, 25 + row * 25, 90, 23), FontStyle.Bold, StringAlignment.Far);
+            }
         }
         else if (Key == "absence")
         {
