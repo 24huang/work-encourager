@@ -17,7 +17,7 @@ public sealed class AbsenceSnapshot
     public double TodaySeconds, TodayElapsed;
     public decimal TodayLoss, MonthLoss, ActivePayPercent = 100;
     public bool Active, Deficit;
-    public int ActiveKind, UsedToday, BalanceMinutes;
+    public int ActiveKind, UsedToday, BalanceMinutes, MonthRetroMinutes;
     public decimal BalanceValue;
 }
 public static class AbsenceClock
@@ -74,7 +74,7 @@ public static class AbsenceClock
             foreach (Block block in entryBlocks) if (entry.UseTimeOff && block.Seconds == 1800 && block.Pieces[0].From <= now)
                 events.Add(new Event { When = block.Pieces[0].From, Type = 2, Minutes = 30, Block = block });
         }
-        // 按发生时间统一结算；未来加班只能增加未来余额，不能补付过去未被调休覆盖的请假。
+        // 先结算已登记的调休及请假发生时的抵扣，避免升级后重复消耗已使用的余额。
         events.Sort(delegate(Event a, Event b) { int order = a.When.CompareTo(b.When); return order == 0 ? a.Type.CompareTo(b.Type) : order; });
         Queue<Event> credits = new Queue<Event>(); int available = 0, debt = 0;
         foreach (Event item in events)
@@ -98,6 +98,18 @@ public static class AbsenceClock
                 if (item.Type == 1) debt += needed;
             }
         }
+        // 剩余已完成加班可补抵同月较早的无薪/部分计薪请假；不同月份互不回补。
+        blocks.Sort(delegate(Block a, Block b) { return a.Pieces[0].From.CompareTo(b.Pieces[0].From); });
+        foreach (Event credit in credits)
+            foreach (Block block in blocks)
+            {
+                DateTime begin = block.Pieces[0].From, end = block.Pieces[block.Pieces.Count - 1].Until;
+                if (credit.Minutes < 30) break;
+                if (block.Covered || !block.Entry.UseTimeOff || block.Entry.PayPercent >= 100 || block.Seconds != 1800 || credit.When < end || credit.When.Year != begin.Year || credit.When.Month != begin.Month) continue;
+                block.Covered = true; credit.Minutes -= 30; available -= 30;
+                if (begin.Date == now.Date) result.UsedToday += 30;
+                if (begin.Year == now.Year && begin.Month == now.Month) result.MonthRetroMinutes += 30;
+            }
         result.Deficit = debt > 0; result.BalanceMinutes = available;
         foreach (Event credit in credits) result.BalanceValue += credit.Rate * credit.Minutes / 60m;
         double dailySeconds = (TimeSpan.Parse(s.End) - TimeSpan.Parse(s.Start)).TotalSeconds - (s.HasBreak ? (TimeSpan.Parse(s.BreakEnd) - TimeSpan.Parse(s.BreakStart)).TotalSeconds : 0);
@@ -160,7 +172,7 @@ public sealed class AbsenceForm : Form
         Button remove = new Button { Name = "RemoveAbsence", Text = "删除选中记录", Bounds = new Rectangle(405, 151, 195, 32) }; Controls.Add(remove);
         records = new ListBox { Name = "AbsenceEntries", Bounds = new Rectangle(20, 200, 580, 185), HorizontalScrollbar = true }; Controls.Add(records);
         info = new Label { Name = "AbsenceInfo", Bounds = new Rectangle(20, 402, 580, 52) }; Controls.Add(info);
-        Controls.Add(new Label { Text = "可提前安排或补录，扣除午休和休息日。病假比例未设时需填写。\n调休不预留，每个有效半小时开始时使用当时余额；不足部分按假种计薪。\n有效工时尾数不足半小时不扣调休；修改历史记录会重新计算。\n此处自动扣除的调休，请勿再到加班窗口重复登记。", Bounds = new Rectangle(20, 463, 580, 90) });
+        Controls.Add(new Label { Text = "可提前安排或补录，扣除午休和休息日。计薪0%=无薪，100%=全额发薪。\n调休不预留；之后完成的加班可补抵同月较早、勾选优先调休的非全薪请假。\n已使用的调休先保留；有效尾数不足半小时不扣调休，历史修改会重新计算。\n此处自动扣除的调休，请勿再到加班窗口重复登记。", Bounds = new Rectangle(20, 463, 580, 90) });
         Button save = new Button { Name = "SaveAbsence", Text = "保存并应用", Bounds = new Rectangle(410, 570, 190, 36) }; Controls.Add(save);
         Button cancel = new Button { Text = "取消", DialogResult = DialogResult.Cancel, Bounds = new Rectangle(290, 570, 100, 36) }; Controls.Add(cancel); AcceptButton = save; CancelButton = cancel;
         add.Click += delegate
@@ -197,6 +209,6 @@ public sealed class AbsenceForm : Form
     {
         records.Items.Clear(); foreach (AbsenceEntry entry in draft.Absences) records.Items.Add(AbsenceClock.Names[entry.Kind] + " " + entry.From.ToString("yyyy-MM-dd HH:mm") + "—" + entry.Until.ToString("yyyy-MM-dd HH:mm") + " " + entry.PayPercent + "%" + (entry.UseTimeOff ? " 优先调休" : " 不用调休"));
         AbsenceSnapshot status = AbsenceClock.At(draft, DateTime.Now);
-        info.Text = "今日计划请假 " + (status.TodaySeconds / 3600).ToString("0.##") + " 小时；已自动抵扣调休 " + (status.UsedToday / 60m).ToString("0.#") + " 小时\n" + (draft.PrivacyMode ? "请假扣款已隐藏" : "今日截至当前少计 ¥ " + status.TodayLoss.ToString("N2")) + "（未来请假不会提前扣工资或占用调休）";
+        info.Text = "今日计划请假 " + (status.TodaySeconds / 3600).ToString("0.##") + " 小时；自动调休 " + (status.UsedToday / 60m).ToString("0.#") + " 小时；本月补抵 " + (status.MonthRetroMinutes / 60m).ToString("0.#") + " 小时\n" + (draft.PrivacyMode ? "请假扣款已隐藏" : "今日截至当前少计 ¥ " + status.TodayLoss.ToString("N2")) + "（未来请假不会提前扣工资或占用调休）";
     }
 }

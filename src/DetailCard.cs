@@ -51,7 +51,7 @@ public sealed class DetailCard : Control
     {
         if (key == "income" || key == "month") return mini ? 64 : 76;
         if (key == "overtime") return mini ? 102 : 110;
-        if (key == "absence") return mini ? 90 : 96;
+        if (key == "absence") return mini ? 110 : 116;
         if (key == "rate") return mini ? 44 : 48;
         if (key == "progress") return mini ? 56 : 64;
         if (key == "countdown") return mini ? 60 : 68;
@@ -90,7 +90,8 @@ public sealed class DetailCard : Control
         {
             Widget.Write(g, "今日请假 " + (snapshot.Absence.TodaySeconds / 3600).ToString("0.##") + " 小时", 10, ink, new RectangleF(10, 24, Width - 20, 22), FontStyle.Bold, StringAlignment.Near);
             Widget.Write(g, "自动调休 " + (snapshot.Absence.UsedToday / 60m).ToString("0.#") + " 小时", 9, muted, new RectangleF(10, 47, Width - 20, 20), FontStyle.Regular, StringAlignment.Near);
-            Widget.Write(g, settings.PrivacyMode ? "扣款已隐藏" : "截至当前少计 ¥ " + snapshot.Absence.TodayLoss.ToString("N2"), 8, accent, new RectangleF(10, 69, Width - 20, 20), FontStyle.Regular, StringAlignment.Near);
+            Widget.Write(g, "本月补抵 " + (snapshot.Absence.MonthRetroMinutes / 60m).ToString("0.#") + " 小时", 9, muted, new RectangleF(10, 67, Width - 20, 20), FontStyle.Regular, StringAlignment.Near);
+            Widget.Write(g, settings.PrivacyMode ? "扣款已隐藏" : "截至当前少计 ¥ " + snapshot.Absence.TodayLoss.ToString("N2"), 8, accent, new RectangleF(10, 88, Width - 20, 20), FontStyle.Regular, StringAlignment.Near);
         }
         else if (Key == "overtime")
         {

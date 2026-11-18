@@ -84,7 +84,7 @@ public static class OvertimeClock
     }
     public static string Text(Settings settings, OvertimeSnapshot value)
     {
-        return "今日加班 " + (value.TodayMinutes / 60m).ToString("0.#") + " 小时" + (settings.PrivacyMode ? "" : "，折算 ¥ " + value.TodayValue.ToString("N2")) + "\n可调休 " + (value.BalanceMinutes / 60m).ToString("0.#") + " 小时" + (settings.PrivacyMode ? "（金额已隐藏）" : "，对应 ¥ " + value.BalanceValue.ToString("N2"));
+        return "今日加班 " + (value.TodayMinutes / 60m).ToString("0.#") + " 小时" + (settings.PrivacyMode ? "" : "，折算 ¥ " + value.TodayValue.ToString("N2")) + "\n可调休 " + (value.BalanceMinutes / 60m).ToString("0.#") + " 小时" + (settings.PrivacyMode ? "（金额已隐藏）" : "，对应 ¥ " + value.BalanceValue.ToString("N2")) + (value.Absence != null && value.Absence.MonthRetroMinutes > 0 ? "\n本月已补抵请假 " + (value.Absence.MonthRetroMinutes / 60m).ToString("0.#") + " 小时" : "");
     }
 }
 
@@ -123,7 +123,7 @@ public sealed class OvertimeForm : Form
         Button undo = new Button { Text = "删除选中", Bounds = new Rectangle(490, 330, 90, 32) }; Controls.Add(undo);
         leaveList = new ListBox { Name = "LeaveEntries", Bounds = new Rectangle(20, 375, 560, 90) }; Controls.Add(leaveList);
         balance = new Label { Name = "OvertimeBalance", Bounds = new Rectangle(20, 478, 560, 54) }; Controls.Add(balance);
-        Controls.Add(new Label { Text = "按填写的时段估算，关闭程序也计入。金额按登记时正常时薪折算。\n较早的加班优先抵扣；加班结束后发总结，健康提醒继续生效。", Bounds = new Rectangle(20, 540, 560, 46) });
+        Controls.Add(new Label { Text = "完成整半小时后，可自动补抵同月较早、优先调休的非全薪请假。\n已使用的调休保留；补抵后恢复正常工资，对应加班余额同步减少。", Bounds = new Rectangle(20, 540, 560, 46) });
         Button save = new Button { Name = "SaveOvertime", Text = "保存并应用", Bounds = new Rectangle(395, 610, 185, 36) }; Controls.Add(save);
         Button cancel = new Button { Text = "取消", DialogResult = DialogResult.Cancel, Bounds = new Rectangle(280, 610, 100, 36) }; Controls.Add(cancel); AcceptButton = save; CancelButton = cancel;
         add.Click += delegate
@@ -159,7 +159,7 @@ public sealed class OvertimeForm : Form
         };
         use.Click += delegate
         {
-            try { Settings next = draft.Copy(); next.LeaveEntries.Add(new LeaveEntry { Date = leaveDate.Value.Date, Minutes = (int)leaveMinutes.Value, RegisteredAt = DateTime.Now }); OvertimeClock.Validate(next, DateTime.Now); draft.LeaveEntries = next.LeaveEntries; RefreshRecords(); }
+            try { DateTime checkpoint = leaveDate.Value.Date == DateTime.Today ? DateTime.Now : leaveDate.Value.Date.AddDays(1).AddTicks(-1); if ((int)leaveMinutes.Value > OvertimeClock.At(draft, checkpoint).BalanceMinutes) throw new Exception("调休余额不足（已自动补抵请假的时长不能再次使用）。"); Settings next = draft.Copy(); next.LeaveEntries.Add(new LeaveEntry { Date = leaveDate.Value.Date, Minutes = (int)leaveMinutes.Value, RegisteredAt = DateTime.Now }); OvertimeClock.Validate(next, DateTime.Now); draft.LeaveEntries = next.LeaveEntries; RefreshRecords(); }
             catch (Exception ex) { MessageBox.Show(this, ex.Message, "调休未登记"); }
         };
         undo.Click += delegate { if (leaveList.SelectedIndex >= 0) { draft.LeaveEntries.RemoveAt(leaveList.SelectedIndex); RefreshRecords(); } };

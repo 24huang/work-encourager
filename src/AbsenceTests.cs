@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Windows.Forms;
 
 public static class AbsenceTests
@@ -37,10 +37,10 @@ public static class AbsenceTests
         check(value.Absence.UsedToday == 60 && value.Absence.TodayLoss == 50 && value.Earned == 350 && value.Overtime.BalanceMinutes == 0, "Insufficient time-off covers available whole blocks and applies leave pay to the remainder");
         bank.OvertimeEntries.Add(new OvertimeEntry { Start = day.AddHours(18), Minutes = 60, HourlyRate = 80 });
         value = WorkClock.At(bank, day.AddHours(20));
-        check(value.Absence.TodayLoss == 50 && value.Overtime.BalanceMinutes == 60 && value.Overtime.BalanceValue == 80, "Later overtime cannot retroactively pay earlier leave");
+        check(value.Absence.TodayLoss == 0 && value.Earned == 400 && value.Overtime.BalanceMinutes == 0 && value.Absence.MonthRetroMinutes == 60, "Completed later overtime restores same-month leave pay and consumes its balance");
         check(AbsenceClock.At(bank, day.AddHours(10)).ActivePayPercent == 0, "A depleted bank falls back to the record's pay percentage");
         Settings halfPaid = bank.Copy(); halfPaid.Absences[0].PayPercent = 50;
-        check(WorkClock.At(halfPaid, day.AddHours(20)).Earned == 375, "The uncovered portion uses a custom percentage instead of assuming unpaid leave");
+        check(WorkClock.At(halfPaid, day.AddHours(18)).Earned == 375, "The uncovered portion uses a custom percentage instead of assuming unpaid leave");
         Settings fifo = unpaid.Copy(); fifo.Absences[0].UseTimeOff = true;
         fifo.OvertimeEntries.Add(new OvertimeEntry { Start = day.AddDays(-1).AddHours(20), Minutes = 120, HourlyRate = 80 });
         fifo.OvertimeEntries.Add(new OvertimeEntry { Start = day.AddDays(-1).AddHours(18), Minutes = 60, HourlyRate = 50 });
@@ -70,7 +70,7 @@ public static class AbsenceTests
         Settings clone = unpaid.Copy(); clone.Absences[0].PayPercent = 100;
         check(unpaid.Absences[0].PayPercent == 0 && basic.SickLeavePercent == -1, "Leave drafts are independent and sick pay has no invented default");
         Storage.Save(bank); Settings loaded = Storage.Load();
-        check(loaded.Absences.Count == 1 && WorkClock.At(loaded, day.AddHours(20)).Earned == 350 && loaded.Absences[0].UseTimeOff, "Leave periods and automatic consumption reproduce after configuration reload");
+        check(loaded.Absences.Count == 1 && WorkClock.At(loaded, day.AddHours(20)).Earned == 400 && loaded.Absences[0].UseTimeOff, "Leave periods and automatic consumption reproduce after configuration reload");
         Settings seven = basic.Copy(); seven.DetailOrder = "overtime,month,income,rate,progress,countdown,encouragement"; seven.DetailVisible = "month,progress";
         // Save directly to emulate the preceding release, whose seven-component schema predates this validator.
         using (System.IO.FileStream stream = System.IO.File.Create(Storage.PathName)) new System.Xml.Serialization.XmlSerializer(typeof(Settings)).Serialize(stream, seven);

@@ -734,7 +734,7 @@ public sealed class Widget : Form
             if (key == "income") lines.Add("今日收入：" + (value.PrivacyMode ? "¥ ****" : value.MonthlySalary == 0 ? "请先设置薪资" : "¥ " + current.Earned.ToString("N2")));
             else if (key == "month") lines.Add("本月累计：" + (value.PrivacyMode ? "¥ ****" : value.MonthlySalary == 0 ? "请先设置薪资" : "¥ " + current.MonthEarned.ToString("N2")));
             else if (key == "overtime") lines.Add(OvertimeClock.Text(value, current.Overtime));
-            else if (key == "absence") lines.Add("今日计划请假 " + (current.Absence.TodaySeconds / 3600).ToString("0.##") + " 小时，自动调休 " + (current.Absence.UsedToday / 60m).ToString("0.#") + " 小时" + (value.PrivacyMode ? "（扣款隐藏）" : "，截至当前少计 ¥ " + current.Absence.TodayLoss.ToString("N2")));
+            else if (key == "absence") lines.Add("今日计划请假 " + (current.Absence.TodaySeconds / 3600).ToString("0.##") + " 小时，自动调休 " + (current.Absence.UsedToday / 60m).ToString("0.#") + " 小时，本月补抵 " + (current.Absence.MonthRetroMinutes / 60m).ToString("0.#") + " 小时" + (value.PrivacyMode ? "（扣款隐藏）" : "，截至当前少计 ¥ " + current.Absence.TodayLoss.ToString("N2")));
             else if (key == "rate") lines.Add("每秒收入：" + (value.PrivacyMode ? "¥ ****" : value.MonthlySalary == 0 ? "—" : "¥ " + current.PerSecond.ToString(current.PerSecond >= .0001m ? "0.0000" : "0.0000########")));
             else if (key == "progress") lines.Add("上班进度：" + current.Progress.ToString("P1"));
             else if (key == "countdown") lines.Add("剩余工时：" + (current.WorkingDay ? string.Format("{0:00}:{1:00}:{2:00}", (int)(current.Remaining / 3600), (int)(current.Remaining / 60) % 60, (int)current.Remaining % 60) : "今日休息"));
@@ -1821,7 +1821,7 @@ public static class Tests
                 while (!popup.IsDisposed && waiting.Elapsed.TotalSeconds < 17) { Application.DoEvents(); Thread.Sleep(25); }
                 check(popup.IsDisposed && waiting.Elapsed.TotalSeconds >= 14, "Popup automatically dismisses after fifteen seconds");
             }
-            OvertimeTests.Run(check); AbsenceTests.Run(check); PetInputTests.Run(check); CommandMemoTests.Run(check);
+            OvertimeTests.Run(check); AbsenceTests.Run(check); PetInputTests.Run(check); CommandMemoTests.Run(check); RetroTimeOffTests.Run(check);
             report.AppendLine("All " + checks + " checks passed.");
         }
         catch (Exception ex) { report.AppendLine(ex.ToString()); Environment.ExitCode = 1; }
