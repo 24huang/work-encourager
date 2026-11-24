@@ -20,6 +20,13 @@ public sealed class AbsenceSnapshot
     public int ActiveKind, UsedToday, BalanceMinutes, MonthRetroMinutes, MonthUsedMinutes;
     public decimal BalanceValue, TodayOvertimeValue;
 }
+// 明细账按同一结算时点汇集每日结果，不另行计算调休，以免漏掉之后的补抵。
+public sealed class AbsenceDay
+{
+    public double LeaveSeconds, UncoveredSeconds;
+    public int AutoMinutes, RetroMinutes, ManualMinutes;
+    public decimal Loss, OvertimeValue;
+}
 public static class AbsenceClock
 {
     public static readonly string[] Names = { "事假", "病假", "年假" };
@@ -27,7 +34,7 @@ public static class AbsenceClock
     private sealed class Block
     {
         public AbsenceEntry Entry; public List<Piece> Pieces = new List<Piece>();
-        public double Seconds; public bool Covered;
+        public double Seconds; public bool Covered, Retro;
     }
     private sealed class Event
     {
@@ -60,6 +67,10 @@ public static class AbsenceClock
     }
     public static AbsenceSnapshot At(Settings s, DateTime now)
     {
+        return At(s, now, null);
+    }
+    public static AbsenceSnapshot At(Settings s, DateTime now, Dictionary<DateTime, AbsenceDay> daily)
+    {
         AbsenceSnapshot result = new AbsenceSnapshot(); List<Event> events = new List<Event>(); List<Block> blocks = new List<Block>();
         foreach (OvertimeEntry record in s.OvertimeEntries)
             for (DateTime earned = record.Start.AddMinutes(30); earned <= record.End && earned <= now; earned = earned.AddMinutes(30)) events.Add(new Event { When = earned, Type = 0, Minutes = 30, Rate = record.HourlyRate });
@@ -70,6 +81,7 @@ public static class AbsenceClock
             {
                 events.Add(new Event { When = when, Type = 1, Minutes = record.Minutes });
                 if (record.Date.Year == now.Year && record.Date.Month == now.Month) result.MonthUsedMinutes += record.Minutes;
+                AbsenceDay day; if (daily != null && daily.TryGetValue(record.Date.Date, out day)) day.ManualMinutes += record.Minutes;
             }
         }
         foreach (AbsenceEntry entry in s.Absences)
@@ -110,7 +122,7 @@ public static class AbsenceClock
                 DateTime begin = block.Pieces[0].From, end = block.Pieces[block.Pieces.Count - 1].Until;
                 if (credit.Minutes < 30) break;
                 if (block.Covered || !block.Entry.UseTimeOff || block.Entry.PayPercent >= 100 || block.Seconds != 1800 || credit.When < end || credit.When.Year != begin.Year || credit.When.Month != begin.Month) continue;
-                block.Covered = true; credit.Minutes -= 30; available -= 30;
+                block.Covered = true; block.Retro = true; credit.Minutes -= 30; available -= 30;
                 if (begin.Date == now.Date) result.UsedToday += 30;
                 if (begin.Year == now.Year && begin.Month == now.Month) result.MonthRetroMinutes += 30;
             }
@@ -119,9 +131,15 @@ public static class AbsenceClock
         {
             decimal value = credit.Rate * credit.Minutes / 60m; result.BalanceValue += value;
             if (credit.When.Date == now.Date) result.TodayOvertimeValue += value;
+            AbsenceDay day; if (daily != null && daily.TryGetValue(credit.When.Date, out day)) day.OvertimeValue += value;
         }
         // Covered统一包含发生时抵扣与之后补抵；每块只统计一次，补抵不再另加到已用调休。
-        foreach (Block block in blocks) if (block.Covered && block.Pieces[0].From.Year == now.Year && block.Pieces[0].From.Month == now.Month) result.MonthUsedMinutes += 30;
+        foreach (Block block in blocks) if (block.Covered)
+        {
+            if (block.Pieces[0].From.Year == now.Year && block.Pieces[0].From.Month == now.Month) result.MonthUsedMinutes += 30;
+            AbsenceDay day;
+            if (daily != null && daily.TryGetValue(block.Pieces[0].From.Date, out day)) { day.AutoMinutes += 30; if (block.Retro) day.RetroMinutes += 30; }
+        }
         double dailySeconds = (TimeSpan.Parse(s.End) - TimeSpan.Parse(s.Start)).TotalSeconds - (s.HasBreak ? (TimeSpan.Parse(s.BreakEnd) - TimeSpan.Parse(s.BreakStart)).TotalSeconds : 0);
         foreach (Block block in blocks) foreach (Piece piece in block.Pieces)
         {
@@ -138,6 +156,12 @@ public static class AbsenceClock
             int days = s.ManualDays && s.ManualMonth == piece.From.ToString("yyyy-MM") ? s.Days : WorkClock.CountDays(s, piece.From);
             decimal loss = (s.MonthlySalary / days) * (decimal)elapsed / (decimal)dailySeconds * (100 - paid) / 100m;
             result.MonthLoss += loss; if (piece.From.Date == now.Date) result.TodayLoss += loss;
+            AbsenceDay reportDay;
+            if (daily != null && daily.TryGetValue(piece.From.Date, out reportDay))
+            {
+                reportDay.LeaveSeconds += elapsed; reportDay.Loss += loss;
+                if (!block.Covered && block.Entry.PayPercent < 100) reportDay.UncoveredSeconds += elapsed;
+            }
         }
         return result;
     }

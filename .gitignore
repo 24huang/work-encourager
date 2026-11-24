@@ -3,6 +3,7 @@ settings.xml
 settings.xml.*
 commands.xml
 commands.xml.*
+导出/
 
 # 编译产物与本地验证文件
 *.exe

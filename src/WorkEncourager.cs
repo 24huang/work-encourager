@@ -528,6 +528,7 @@ public sealed class Widget : Form
     private OvertimeForm activeOvertimeForm;
     private AbsenceForm activeAbsenceForm;
     private CommandMemoForm commandMemo;
+    private MonthlyLedgerForm monthlyLedger;
     private bool privacyHotkey;
     [DllImport("user32.dll")] private static extern bool RegisterHotKey(IntPtr window, int id, uint modifiers, uint key);
     [DllImport("user32.dll")] private static extern bool UnregisterHotKey(IntPtr window, int id);
@@ -562,6 +563,15 @@ public sealed class Widget : Form
         menu.Items.Add("设置", null, delegate { OpenSettings(); });
         menu.Items.Add("今日加班 / 调休", null, delegate { OpenOvertime(); });
         menu.Items.Add("请假管理", null, delegate { OpenAbsence(); });
+        menu.Items.Add("月度明细账", null, delegate
+        {
+            try
+            {
+                if (monthlyLedger == null || monthlyLedger.IsDisposed) monthlyLedger = new MonthlyLedgerForm(settings, delegate { return settings; });
+                ShowHoverInfo(false); monthlyLedger.Show(this); monthlyLedger.WindowState = FormWindowState.Normal; monthlyLedger.Activate();
+            }
+            catch (Exception ex) { MessageBox.Show(this, "明细账打开失败：\n" + ex.Message, "月度明细账"); }
+        });
         menu.Items.Add("命令备忘录", null, delegate
         {
             try
@@ -771,6 +781,7 @@ public sealed class Widget : Form
         if (activeSettingsForm != null && !activeSettingsForm.IsDisposed) activeSettingsForm.ApplyPrivacy(next.PrivacyMode);
         if (activeOvertimeForm != null && !activeOvertimeForm.IsDisposed) activeOvertimeForm.ApplyPrivacy(next.PrivacyMode);
         if (activeAbsenceForm != null && !activeAbsenceForm.IsDisposed) activeAbsenceForm.ApplyPrivacy(next.PrivacyMode);
+        if (monthlyLedger != null && !monthlyLedger.IsDisposed) monthlyLedger.ApplyPrivacy(next.PrivacyMode);
         Snapshot current = WorkClock.At(settings, DateTime.Now);
         foreach (Control control in detailBody.Controls) { DetailCard field = control as DetailCard; if (field != null) field.UpdateView(settings, current); }
         if (hoverPopup != null && !hoverPopup.IsDisposed) hoverPopup.SetMessage(BuildHoverMessage(settings, DateTime.Now));
@@ -1834,7 +1845,7 @@ public static class Tests
                 while (!popup.IsDisposed && waiting.Elapsed.TotalSeconds < 17) { Application.DoEvents(); Thread.Sleep(25); }
                 check(popup.IsDisposed && waiting.Elapsed.TotalSeconds >= 14, "Popup automatically dismisses after fifteen seconds");
             }
-            OvertimeTests.Run(check); AbsenceTests.Run(check); PetInputTests.Run(check); CommandMemoTests.Run(check); RetroTimeOffTests.Run(check); MonthHoursTests.Run(check); TodayIncomeTests.Run(check);
+            OvertimeTests.Run(check); AbsenceTests.Run(check); PetInputTests.Run(check); CommandMemoTests.Run(check); RetroTimeOffTests.Run(check); MonthHoursTests.Run(check); TodayIncomeTests.Run(check); MonthlyLedgerTests.Run(check);
             report.AppendLine("All " + checks + " checks passed.");
         }
         catch (Exception ex) { report.AppendLine(ex.ToString()); Environment.ExitCode = 1; }
