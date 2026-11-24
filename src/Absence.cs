@@ -90,42 +90,59 @@ public static class AbsenceClock
             foreach (Block block in entryBlocks) if (entry.UseTimeOff && block.Seconds == 1800 && block.Pieces[0].From <= now)
                 events.Add(new Event { When = block.Pieces[0].From, Type = 2, Minutes = 30, Block = block });
         }
-        // 先结算已登记的调休及请假发生时的抵扣，避免升级后重复消耗已使用的余额。
+        // 已登记手动调休是已经使用的额度，先保留；自动抵扣只能使用其余信用。
         events.Sort(delegate(Event a, Event b) { int order = a.When.CompareTo(b.When); return order == 0 ? a.Type.CompareTo(b.Type) : order; });
-        Queue<Event> credits = new Queue<Event>(); int available = 0, debt = 0;
+        Queue<Event> manualCredits = new Queue<Event>(); int debt = 0;
         foreach (Event item in events)
         {
             if (item.Type == 0)
             {
                 int repayment = Math.Min(debt, item.Minutes); debt -= repayment; item.Minutes -= repayment;
-                if (item.Minutes > 0) { credits.Enqueue(item); available += item.Minutes; }
+                if (item.Minutes > 0) manualCredits.Enqueue(item);
             }
-            else
+            else if (item.Type == 1)
             {
-                if (item.Type == 2 && available < 30) continue;
-                if (item.Type == 2) { item.Block.Covered = true; if (item.When.Date == now.Date) result.UsedToday += 30; }
                 int needed = item.Minutes;
+                while (needed > 0 && manualCredits.Count > 0)
+                {
+                    Event credit = manualCredits.Peek(); int consumed = Math.Min(needed, credit.Minutes);
+                    credit.Minutes -= consumed; needed -= consumed;
+                    if (credit.Minutes == 0) manualCredits.Dequeue();
+                }
+                debt += needed;
+            }
+        }
+        // 每笔加班完成时就补抵此前等待的同月请假，不能等所有未来请假处理后才补抵。
+        // 否则较晚请假会重新抢走较早请假已经获得的信用，导致旧日扣薪反复变化。
+        Queue<Event> credits = new Queue<Event>(); List<Block> waiting = new List<Block>(); int available = 0;
+        foreach (Event item in events)
+        {
+            if (item.Type == 0 && item.Minutes > 0)
+            {
+                credits.Enqueue(item); available += item.Minutes;
+                foreach (Block block in waiting)
+                {
+                    DateTime begin = block.Pieces[0].From, end = block.Pieces[block.Pieces.Count - 1].Until;
+                    if (item.Minutes < 30) break;
+                    if (block.Covered || item.When < end || item.When.Year != begin.Year || item.When.Month != begin.Month) continue;
+                    block.Covered = true; block.Retro = true; item.Minutes -= 30; available -= 30;
+                    if (begin.Date == now.Date) result.UsedToday += 30;
+                    if (begin.Year == now.Year && begin.Month == now.Month) result.MonthRetroMinutes += 30;
+                }
+            }
+            else if (item.Type == 2)
+            {
+                if (available < 30) { if (item.Block.Entry.PayPercent < 100) waiting.Add(item.Block); continue; }
+                item.Block.Covered = true; if (item.When.Date == now.Date) result.UsedToday += 30;
+                int needed = 30;
                 while (needed > 0 && credits.Count > 0)
                 {
                     Event credit = credits.Peek(); int consumed = Math.Min(needed, credit.Minutes);
                     credit.Minutes -= consumed; needed -= consumed; available -= consumed;
                     if (credit.Minutes == 0) credits.Dequeue();
                 }
-                if (item.Type == 1) debt += needed;
             }
         }
-        // 剩余已完成加班可补抵同月较早的无薪/部分计薪请假；不同月份互不回补。
-        blocks.Sort(delegate(Block a, Block b) { return a.Pieces[0].From.CompareTo(b.Pieces[0].From); });
-        foreach (Event credit in credits)
-            foreach (Block block in blocks)
-            {
-                DateTime begin = block.Pieces[0].From, end = block.Pieces[block.Pieces.Count - 1].Until;
-                if (credit.Minutes < 30) break;
-                if (block.Covered || !block.Entry.UseTimeOff || block.Entry.PayPercent >= 100 || block.Seconds != 1800 || credit.When < end || credit.When.Year != begin.Year || credit.When.Month != begin.Month) continue;
-                block.Covered = true; block.Retro = true; credit.Minutes -= 30; available -= 30;
-                if (begin.Date == now.Date) result.UsedToday += 30;
-                if (begin.Year == now.Year && begin.Month == now.Month) result.MonthRetroMinutes += 30;
-            }
         result.Deficit = debt > 0; result.BalanceMinutes = available;
         foreach (Event credit in credits)
         {
@@ -186,6 +203,9 @@ public sealed class AbsenceForm : Form
     private readonly Settings draft;
     private readonly ListBox records;
     private readonly Label info;
+    private readonly Button add;
+    private int editingIndex = -1;
+    private bool fillingRecords, loadingEditor, editorDirty;
     public Settings Result;
     public AbsenceForm(Settings source, Func<Settings> getCurrent = null)
     {
@@ -194,40 +214,68 @@ public sealed class AbsenceForm : Form
         ClientSize = new Size(620, Math.Min(640, Screen.FromPoint(Cursor.Position).WorkingArea.Height - 100)); AutoScroll = true;
         Controls.Add(new Label { Text = "事假 / 病假 / 年假", Bounds = new Rectangle(20, 18, 560, 28), Font = new Font(Font, FontStyle.Bold) });
         ComboBox kind = new ComboBox { Name = "AbsenceKind", DropDownStyle = ComboBoxStyle.DropDownList, Bounds = new Rectangle(20, 56, 130, 28) }; kind.Items.AddRange(AbsenceClock.Names); Controls.Add(kind);
-        Controls.Add(new Label { Text = "计薪比例 %", Bounds = new Rectangle(170, 60, 100, 25) });
+        Controls.Add(new Label { Text = "发薪比例 %", Bounds = new Rectangle(170, 60, 100, 25) });
         TextBox percent = new TextBox { Name = "AbsencePercent", Bounds = new Rectangle(275, 56, 90, 28) }; Controls.Add(percent);
         CheckBox bank = new CheckBox { Name = "UseTimeOffFirst", Text = "优先使用调休（1:1）", Checked = true, Bounds = new Rectangle(390, 56, 215, 28) }; Controls.Add(bank);
         kind.SelectedIndexChanged += delegate { decimal value = kind.SelectedIndex == 0 ? draft.PersonalLeavePercent : kind.SelectedIndex == 1 ? draft.SickLeavePercent : draft.AnnualLeavePercent; percent.Text = value < 0 ? "" : value.ToString(CultureInfo.CurrentCulture); }; kind.SelectedIndex = 0;
+        Controls.Add(new Label { Text = "0%=无薪；100%=全薪不扣款。选中记录可修改，保存并应用后生效。", Bounds = new Rectangle(20, 86, 580, 17), Font = new Font(Font.FontFamily, 8) });
         Controls.Add(new Label { Text = "开始", Bounds = new Rectangle(20, 108, 65, 26) });
         DateTimePicker from = new DateTimePicker { Name = "AbsenceFrom", Format = DateTimePickerFormat.Custom, CustomFormat = "yyyy-MM-dd HH:mm", Value = DateTime.Today.Add(TimeSpan.Parse(source.Start)), Bounds = new Rectangle(90, 104, 215, 28) }; Controls.Add(from);
         Controls.Add(new Label { Text = "结束", Bounds = new Rectangle(320, 108, 65, 26) });
         DateTimePicker until = new DateTimePicker { Name = "AbsenceUntil", Format = DateTimePickerFormat.Custom, CustomFormat = "yyyy-MM-dd HH:mm", Value = DateTime.Today.Add(TimeSpan.Parse(source.End)), Bounds = new Rectangle(385, 104, 215, 28) }; Controls.Add(until);
         Button whole = new Button { Text = "按所选日期整天", Bounds = new Rectangle(20, 151, 175, 32) }; Controls.Add(whole);
-        whole.Click += delegate { from.Value = from.Value.Date.Add(TimeSpan.Parse(draft.Start)); until.Value = until.Value.Date.Add(TimeSpan.Parse(draft.End)); };
-        Button add = new Button { Name = "AddAbsence", Text = "添加请假", Bounds = new Rectangle(215, 151, 170, 32) }; Controls.Add(add);
-        Button remove = new Button { Name = "RemoveAbsence", Text = "删除选中记录", Bounds = new Rectangle(405, 151, 195, 32) }; Controls.Add(remove);
+        whole.Click += delegate { from.Value = from.Value.Date.Add(TimeSpan.Parse(draft.Start)); until.Value = until.Value.Date.Add(TimeSpan.Parse(draft.End)); editorDirty = true; };
+        add = new Button { Name = "AddAbsence", Text = "添加请假", Bounds = new Rectangle(205, 151, 120, 32) }; Controls.Add(add);
+        Button newEntry = new Button { Name = "NewAbsence", Text = "新建请假", Bounds = new Rectangle(335, 151, 105, 32) }; Controls.Add(newEntry);
+        Button remove = new Button { Name = "RemoveAbsence", Text = "删除选中记录", Bounds = new Rectangle(450, 151, 150, 32) }; Controls.Add(remove);
         records = new ListBox { Name = "AbsenceEntries", Bounds = new Rectangle(20, 200, 580, 185), HorizontalScrollbar = true }; Controls.Add(records);
         info = new Label { Name = "AbsenceInfo", Bounds = new Rectangle(20, 402, 580, 52) }; Controls.Add(info);
         Controls.Add(new Label { Text = "可提前安排或补录，扣除午休和休息日。计薪0%=无薪，100%=全额发薪。\n调休不预留；之后完成的加班可补抵同月较早、勾选优先调休的非全薪请假。\n已使用的调休先保留；有效尾数不足半小时不扣调休，历史修改会重新计算。\n此处自动扣除的调休，请勿再到加班窗口重复登记。", Bounds = new Rectangle(20, 463, 580, 90) });
         Button save = new Button { Name = "SaveAbsence", Text = "保存并应用", Bounds = new Rectangle(410, 570, 190, 36) }; Controls.Add(save);
         Button cancel = new Button { Text = "取消", DialogResult = DialogResult.Cancel, Bounds = new Rectangle(290, 570, 100, 36) }; Controls.Add(cancel); AcceptButton = save; CancelButton = cancel;
-        add.Click += delegate
+        EventHandler changed = delegate { if (!loadingEditor) editorDirty = true; };
+        kind.SelectedIndexChanged += changed; percent.TextChanged += changed; from.ValueChanged += changed; until.ValueChanged += changed; bank.CheckedChanged += changed;
+        Func<bool> commitRecord = delegate
         {
             try
             {
                 decimal ratio; if (!decimal.TryParse(percent.Text, out ratio) || ratio < 0 || ratio > 100) throw new Exception("请明确填写0%至100%的计薪比例。");
-                Settings next = draft.Copy(); next.Absences.Add(new AbsenceEntry { From = from.Value.AddTicks(-(from.Value.Ticks % TimeSpan.TicksPerMinute)), Until = until.Value.AddTicks(-(until.Value.Ticks % TimeSpan.TicksPerMinute)), Kind = kind.SelectedIndex, PayPercent = ratio, UseTimeOff = bank.Checked });
+                if (ratio == 100 && kind.SelectedIndex != 2 && MessageBox.Show(this, "当前是100%发薪，这段" + AbsenceClock.Names[kind.SelectedIndex] + "不会扣工资。\n确认按全薪登记吗？无薪请假应填0%。", "确认全薪请假", MessageBoxButtons.YesNo, MessageBoxIcon.Question, MessageBoxDefaultButton.Button2) != DialogResult.Yes) return false;
+                Settings next = draft.Copy();
+                AbsenceEntry entry = new AbsenceEntry { From = from.Value.AddTicks(-(from.Value.Ticks % TimeSpan.TicksPerMinute)), Until = until.Value.AddTicks(-(until.Value.Ticks % TimeSpan.TicksPerMinute)), Kind = kind.SelectedIndex, PayPercent = ratio, UseTimeOff = bank.Checked };
+                if (editingIndex >= 0) next.Absences[editingIndex] = entry; else next.Absences.Add(entry);
                 next.Validate(); draft.Absences = next.Absences;
                 if (kind.SelectedIndex == 0) draft.PersonalLeavePercent = ratio; else if (kind.SelectedIndex == 1) draft.SickLeavePercent = ratio; else draft.AnnualLeavePercent = ratio;
-                RefreshRecords();
+                if (editingIndex < 0) editingIndex = draft.Absences.Count - 1;
+                editorDirty = false; RefreshRecords(); return true;
             }
-            catch (Exception ex) { MessageBox.Show(this, ex.Message, "请假未添加"); }
+            catch (Exception ex) { MessageBox.Show(this, ex.Message, "请假未保存"); return false; }
         };
-        remove.Click += delegate { if (records.SelectedIndex >= 0) { draft.Absences.RemoveAt(records.SelectedIndex); RefreshRecords(); } };
+        add.Click += delegate { commitRecord(); };
+        records.SelectedIndexChanged += delegate
+        {
+            if (fillingRecords || records.SelectedIndex < 0) return;
+            int selected = records.SelectedIndex;
+            if (editorDirty && !commitRecord()) { fillingRecords = true; records.SelectedIndex = editingIndex; fillingRecords = false; return; }
+            fillingRecords = loadingEditor = true; editingIndex = selected; records.SelectedIndex = selected;
+            AbsenceEntry entry = draft.Absences[selected]; kind.SelectedIndex = entry.Kind; percent.Text = entry.PayPercent.ToString(CultureInfo.CurrentCulture);
+            from.Value = entry.From; until.Value = entry.Until; bank.Checked = entry.UseTimeOff;
+            editorDirty = false; fillingRecords = loadingEditor = false; add.Text = "更新选中";
+        };
+        newEntry.Click += delegate
+        {
+            if (editorDirty && !commitRecord()) return;
+            loadingEditor = true; editingIndex = -1; records.ClearSelected(); kind.SelectedIndex = 0; percent.Text = draft.PersonalLeavePercent.ToString(CultureInfo.CurrentCulture);
+            from.Value = DateTime.Today.Add(TimeSpan.Parse(draft.Start)); until.Value = DateTime.Today.Add(TimeSpan.Parse(draft.End)); bank.Checked = true;
+            editorDirty = false; loadingEditor = false; add.Text = "添加请假";
+        };
+        remove.Click += delegate { if (records.SelectedIndex >= 0) { draft.Absences.RemoveAt(records.SelectedIndex); editingIndex = -1; editorDirty = false; newEntry.PerformClick(); RefreshRecords(); } };
         save.Click += delegate
         {
             try
             {
+                // 编辑后直接点底部保存也要提交当前条目，不能让输入框和真正保存的记录不同。
+                if (editorDirty && !commitRecord()) return;
                 Settings next = (getCurrent == null ? source : getCurrent()).Copy(); next.Absences = draft.Absences; next.PersonalLeavePercent = draft.PersonalLeavePercent; next.SickLeavePercent = draft.SickLeavePercent; next.AnnualLeavePercent = draft.AnnualLeavePercent;
                 if (!next.DetailVisible.Contains("absence")) next.DetailVisible = next.DetailVisible.Length == 0 ? "absence" : next.DetailVisible + ",absence";
                 Storage.Save(next); Result = next; DialogResult = DialogResult.OK; Close();
@@ -243,8 +291,11 @@ public sealed class AbsenceForm : Form
     public void ApplyPrivacy(bool enabled) { draft.PrivacyMode = enabled; RefreshRecords(); }
     private void RefreshRecords()
     {
-        records.Items.Clear(); foreach (AbsenceEntry entry in draft.Absences) records.Items.Add(AbsenceClock.Names[entry.Kind] + " " + entry.From.ToString("yyyy-MM-dd HH:mm") + "—" + entry.Until.ToString("yyyy-MM-dd HH:mm") + " " + entry.PayPercent + "%" + (entry.UseTimeOff ? " 优先调休" : " 不用调休"));
+        fillingRecords = true; records.Items.Clear();
+        foreach (AbsenceEntry entry in draft.Absences) records.Items.Add(AbsenceClock.Names[entry.Kind] + " 发薪" + entry.PayPercent + "%" + (entry.PayPercent == 0 ? "（无薪）" : entry.PayPercent == 100 ? "（全薪不扣款）" : "") + " " + entry.From.ToString("yyyy-MM-dd HH:mm") + "—" + entry.Until.ToString("yyyy-MM-dd HH:mm") + (entry.UseTimeOff ? " 优先调休" : " 不用调休"));
+        if (editingIndex >= 0 && editingIndex < records.Items.Count) records.SelectedIndex = editingIndex;
+        add.Text = editingIndex >= 0 ? "更新选中" : "添加请假"; fillingRecords = false;
         AbsenceSnapshot status = AbsenceClock.At(draft, DateTime.Now);
-        info.Text = "今日计划请假 " + (status.TodaySeconds / 3600).ToString("0.##") + " 小时；自动调休 " + (status.UsedToday / 60m).ToString("0.#") + " 小时；本月补抵 " + (status.MonthRetroMinutes / 60m).ToString("0.#") + " 小时\n" + (draft.PrivacyMode ? "请假扣款已隐藏" : "今日截至当前少计 ¥ " + status.TodayLoss.ToString("N2")) + "（未来请假不会提前扣工资或占用调休）";
+        info.Text = "今日计划请假 " + (status.TodaySeconds / 3600).ToString("0.##") + " 小时；自动调休 " + (status.UsedToday / 60m).ToString("0.#") + " 小时；本月补抵 " + (status.MonthRetroMinutes / 60m).ToString("0.#") + " 小时\n" + (draft.PrivacyMode ? "请假扣款已隐藏" : "今日请假扣薪 ¥ " + status.TodayLoss.ToString("N2")) + "（已扣除调休覆盖；未来请假不提前扣薪）";
     }
 }

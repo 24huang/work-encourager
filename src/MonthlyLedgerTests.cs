@@ -81,17 +81,19 @@ public static class MonthlyLedgerTests
         string after;
         using (StringWriter writer = new StringWriter()) { new XmlSerializer(typeof(Settings)).Serialize(writer, s); after = writer.ToString(); }
         check(after == original, "Building, viewing and exporting a ledger never modifies its source configuration");
-        Settings ui = s.Copy(); ui.PetEnabled = true; ui.PetWalk = false; ui.PetPose = 0; ui.HoverEnabled = false;
+        Settings ui = s.Copy(); ui.PetEnabled = true; ui.PetWalk = false; ui.PetPose = 0; ui.HoverEnabled = false; ui.AlwaysOnTop = false;
         using (Widget owner = new Widget(ui))
         {
             owner.Show(); Application.DoEvents(); ToolStripMenuItem menu = null;
             foreach (ToolStripItem item in owner.ContextMenuStrip.Items) if (item.Text == "月度明细账") menu = (ToolStripMenuItem)item;
-            check(menu != null, "The shared desktop-pet and tray menu exposes the ledger"); menu.PerformClick(); Application.DoEvents();
+            check(menu != null, "The shared desktop-pet and tray menu exposes the ledger"); menu.PerformClick();
             MonthlyLedgerForm window = null; DesktopPet pet = null;
             foreach (Form form in Application.OpenForms) { if (form is MonthlyLedgerForm) window = (MonthlyLedgerForm)form; if (form is DesktopPet) pet = (DesktopPet)form; }
+            // 集成验证窗口不遮挡用户桌面，避免真实点击把测试窗口提前关闭。
+            if (window != null) window.Opacity = 0; Application.DoEvents();
             check(window != null && window.Visible && pet != null && pet.Enabled && !pet.Paused, "Opening a ledger keeps native desktop-pet interaction enabled");
             menu.PerformClick(); Application.DoEvents(); int count = 0; foreach (Form form in Application.OpenForms) if (form is MonthlyLedgerForm) count++;
-            check(count == 1, "Opening the menu again reuses the existing ledger window");
+            check(count == 1, "Opening the menu again reuses the existing ledger window (count=" + count + ")");
             owner.TogglePrivacy();
             check((string)((DataGridView)window.Controls.Find("LedgerRows", true)[0]).Rows[0].Cells[7].Value == "已隐藏", "The original privacy-eye action also masks the modeless ledger");
             window.Close(); owner.Hide();

@@ -1845,7 +1845,7 @@ public static class Tests
                 while (!popup.IsDisposed && waiting.Elapsed.TotalSeconds < 17) { Application.DoEvents(); Thread.Sleep(25); }
                 check(popup.IsDisposed && waiting.Elapsed.TotalSeconds >= 14, "Popup automatically dismisses after fifteen seconds");
             }
-            OvertimeTests.Run(check); AbsenceTests.Run(check); PetInputTests.Run(check); CommandMemoTests.Run(check); RetroTimeOffTests.Run(check); MonthHoursTests.Run(check); TodayIncomeTests.Run(check); MonthlyLedgerTests.Run(check);
+            OvertimeTests.Run(check); AbsenceTests.Run(check); PetInputTests.Run(check); CommandMemoTests.Run(check); RetroTimeOffTests.Run(check); MonthHoursTests.Run(check); TodayIncomeTests.Run(check); MonthlyLedgerTests.Run(check); LeaveCorrectionTests.Run(check);
             report.AppendLine("All " + checks + " checks passed.");
         }
         catch (Exception ex) { report.AppendLine(ex.ToString()); Environment.ExitCode = 1; }
