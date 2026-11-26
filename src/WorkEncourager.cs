@@ -650,6 +650,7 @@ public sealed class Widget : Form
             privacy.Checked = settings.PrivacyMode;
             petMode.Checked = settings.PetEnabled; walk.Checked = settings.PetWalk;
             for (int i = 0; i < characters.DropDownItems.Count; i++) ((ToolStripMenuItem)characters.DropDownItems[i]).Checked = settings.PetCharacter == i;
+            poses.DropDownItems[1].Text = settings.PetCharacter == PetArt.Beagle ? "闲置趴着" : PetModel3D.PoseNames[0];
             for (int i = 0; i < poses.DropDownItems.Count; i++) ((ToolStripMenuItem)poses.DropDownItems[i]).Checked = settings.PetPose == i - 1;
             poses.Text = "桌宠状态" + (pet == null ? "" : " · " + PetModel3D.PoseNames[pet.CurrentPose]);
             hoverEnabled.Checked = settings.HoverEnabled;
@@ -1771,14 +1772,14 @@ public static class Tests
                 for (int y = 0; y < 190; y++) for (int x = 0; x < 200; x++) if (sitting.GetPixel(x, y) != working.GetPixel(x, y)) same = false;
                 check(same, "Temporary picked-up pose has no floating work desk and does not depend on saved activity");
             }
-            check(PetArt.Names.Length == 6 && PetArt.Names[4] == "招财猫" && PetArt.Names[5] == "面包猫", "Bread cat appends a character without changing existing saved character IDs");
+            check(PetArt.Names.Length == 8 && PetArt.Names[4] == "招财猫" && PetArt.Names[5] == "面包猫" && PetArt.Names[6] == "比格狗" && PetArt.Names[7] == "抹茶旦旦", "New pets append to the roster without changing saved character IDs");
             Settings breadConfig = new Settings { MonthlySalary = 8800, PetCharacter = 5, PetEnabled = false, DailySummaryEnabled = false, PrivacyMode = true };
             Storage.Save(breadConfig);
             using (SettingsForm dialog = new SettingsForm(breadConfig))
             {
                 dialog.Opacity = 0; dialog.Show(); Application.DoEvents();
                 ComboBox choices = (ComboBox)dialog.Controls["PetCharacter"];
-                check(choices.Items.Count == 6 && choices.SelectedIndex == 5 && choices.Text == "面包猫", "Bread cat appears and remains selected in the real settings form");
+                check(choices.Items.Count == 8 && choices.SelectedIndex == 5 && choices.Text == "面包猫", "Bread cat appears and remains selected in the real settings form");
                 ((Button)dialog.AcceptButton).PerformClick();
                 check(Storage.Load().PetCharacter == 5 && Storage.Load().PrivacyMode && Storage.Load().MonthlySalary == 8800, "Saving bread cat preserves salary and privacy preferences");
             }
@@ -1786,8 +1787,8 @@ public static class Tests
             {
                 owner.Opacity = 0; owner.Show(); Application.DoEvents(); ToolStripMenuItem characters = null;
                 foreach (ToolStripItem item in owner.ContextMenuStrip.Items) if (item.Text == "切换桌宠形象") characters = item as ToolStripMenuItem;
-                check(characters != null && characters.DropDownItems.Count == 6 && characters.DropDownItems[5].Text == "面包猫", "Bread cat is available from the existing character menu");
-                characters.DropDownItems[5].PerformClick(); Application.DoEvents();
+                check(characters != null && characters.DropDownItems.Count == 8 && characters.DropDownItems[5].Text == "面包猫", "Bread cat is available from the existing character menu");
+                foreach (int choice in new[] { 6, 7, 5 }) { characters.DropDownItems[choice].PerformClick(); Application.DoEvents(); check(Storage.Load().PetCharacter == choice, "The shape menu persists selected character " + choice); }
                 check(Storage.Load().PetCharacter == 5 && Storage.Load().PetEnabled, "Selecting bread cat from the menu enables the new pet through the original flow"); owner.Hide();
             }
             using (Bitmap front = PetModel3D.Render(5, 0, 18, 0, 0, 12, false, false))

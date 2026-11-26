@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Collections.Generic;
 using System.Drawing;
 using System.Drawing.Imaging;
@@ -21,6 +21,13 @@ public static class PetModel3D
     private static readonly W3.MeshGeometry3D SmallRounded = MakeRound(.43, 10, 16), TinyRounded = MakeRound(.43, 6, 8);
     private static readonly W3.MeshGeometry3D SmallSoft = MakeRound(.78, 10, 16), TinySoft = MakeRound(.78, 6, 10);
     private static readonly W3.MeshGeometry3D Cylinder = MakeCylinder();
+    private static readonly W3.MeshGeometry3D DorsalPlate = MakeDorsalPlate();
+    private static readonly Color[] CoatColors =
+    {
+        Color.FromArgb(245, 178, 107), Color.FromArgb(187, 132, 87), Color.FromArgb(249, 237, 244),
+        Color.FromArgb(207, 230, 242), Color.FromArgb(255, 240, 213), Color.FromArgb(180, 131, 86),
+        Color.Empty, Color.FromArgb(172, 207, 108)
+    };
     private static readonly Dictionary<string, Scene> Scenes = new Dictionary<string, Scene>();
     private static readonly Dictionary<string, W3.Material> Materials = new Dictionary<string, W3.Material>();
     private static readonly Dictionary<string, Bitmap> AnimationFrames = new Dictionary<string, Bitmap>();
@@ -72,6 +79,24 @@ public static class PetModel3D
         }
         mesh.Freeze(); return mesh;
     }
+    private static W3.MeshGeometry3D MakeDorsalPlate()
+    {
+        // 从圆滑网格收窄顶部，并把尖端轻轻向后弯。
+        W3.MeshGeometry3D mesh = SmallSphere.Clone();
+        for (int i = 0; i < mesh.Positions.Count; i++)
+        {
+            W3.Point3D p = mesh.Positions[i];
+            W3.Vector3D n = mesh.Normals[i];
+            double t = (p.Y + 1) / 2, width = 1.17 - .68 * t;
+            mesh.Positions[i] = new W3.Point3D(p.X * width, p.Y, p.Z - .55 * t * t);
+            W3.Vector3D normal = new W3.Vector3D(n.X / width, n.Y + .34 * p.X * n.X / width + .55 * t * n.Z, n.Z);
+            if (normal.LengthSquared > 0) normal.Normalize();
+            mesh.Normals[i] = normal;
+        }
+        mesh.Freeze();
+        return mesh;
+    }
+
     private static W3.MeshGeometry3D MakeCylinder()
     {
         W3.MeshGeometry3D mesh = new W3.MeshGeometry3D(); const int n = 10;
@@ -103,9 +128,12 @@ public static class PetModel3D
         if (color.A == 255) group.Children.Add(new W3.SpecularMaterial(new WM.SolidColorBrush(WM.Color.FromRgb(polished ? (byte)195 : (byte)24, polished ? (byte)205 : (byte)23, polished ? (byte)215 : (byte)22)), polished ? 65 : 18));
         group.Freeze(); Materials.Add(key, group); return group;
     }
-    private static void Ball(W3.Model3DGroup group, double x, double y, double z, double rx, double ry, double rz, Color color, bool box = false, bool polished = false, bool soft = false)
+    private static void Ball(W3.Model3DGroup group, double x, double y, double z, double rx, double ry, double rz, Color color, bool box = false, bool polished = false, bool soft = false, double tilt = 0)
     {
-        W3.Transform3DGroup transform = new W3.Transform3DGroup(); transform.Children.Add(new W3.ScaleTransform3D(rx, ry, rz)); transform.Children.Add(new W3.TranslateTransform3D(x, y, z));
+        W3.Transform3DGroup transform = new W3.Transform3DGroup();
+        transform.Children.Add(new W3.ScaleTransform3D(rx, ry, rz));
+        if (tilt != 0) transform.Children.Add(new W3.RotateTransform3D(new W3.AxisAngleRotation3D(new W3.Vector3D(0, 0, 1), tilt)));
+        transform.Children.Add(new W3.TranslateTransform3D(x, y, z));
         // 细小部件复用低面数网格，头部等大曲面保留细分，不按单一精度渲染所有部件。
         double size = Math.Max(rx, Math.Max(ry, rz));
         W3.MeshGeometry3D geometry = box ? size < .2 ? TinyRounded : size < .48 ? SmallRounded : Rounded : soft ? size < .2 ? TinySoft : size < .48 ? SmallSoft : Soft : size < .2 ? TinySphere : size < .48 ? SmallSphere : Sphere;
@@ -185,11 +213,13 @@ public static class PetModel3D
     }
     private static Scene Build(int kind, int theme, int pose, bool surprised)
     {
+        bool matcha = kind == PetArt.Matcha;
         Scene scene = new Scene { Pose = pose, Kind = kind, TargetY = pose == 1 ? .9 : kind == 2 ? 1.8 : 1.62 };
-        scene.World.Children.Add(new W3.AmbientLight(WM.Color.FromRgb(104, 109, 120)));
-        scene.World.Children.Add(new W3.DirectionalLight(WM.Color.FromRgb(180, 173, 165), new W3.Vector3D(-.45, -.8, -1.2)));
-        scene.World.Children.Add(new W3.DirectionalLight(WM.Color.FromRgb(65, 79, 104), new W3.Vector3D(.8, -.1, .4)));
-        Color fur = kind == 0 ? Color.FromArgb(255, 219, 165) : kind == 1 ? Color.FromArgb(188, 143, 103) : kind == 3 ? Color.FromArgb(210, 232, 244) : kind == 5 ? Color.FromArgb(171, 133, 91) : Color.FromArgb(255, 245, 232);
+        scene.World.Children.Add(new W3.AmbientLight(WM.Color.FromRgb(112, 111, 115)));
+        scene.World.Children.Add(new W3.DirectionalLight(WM.Color.FromRgb(176, 170, 164), new W3.Vector3D(-.65, -.85, -1.2)));
+        scene.World.Children.Add(new W3.DirectionalLight(WM.Color.FromRgb(81, 91, 107), new W3.Vector3D(.8, -.3, .65)));
+        Color fur = CoatColors[kind >= 0 && kind < CoatColors.Length ? kind : 0], cream = Color.FromArgb(255, 246, 230);
+        Color olive = Color.FromArgb(105, 142, 64), visor = Color.FromArgb(25, 52, 73);
         Color accent = theme == 0 ? Color.FromArgb(96, 188, 220) : Color.FromArgb(225, 146, 184), ink = Color.FromArgb(77, 56, 49), pale = kind == 1 ? Color.FromArgb(218, 177, 132) : Color.FromArgb(255, 241, 213);
         if (pose != 4 && pose != 5) Ball(scene.World, 0, -.03, 0, 1.25, .012, .85, Color.FromArgb(28, 55, 55, 75));
         W3.Model3DGroup character = new W3.Model3DGroup(); scene.World.Children.Add(character);
@@ -208,8 +238,15 @@ public static class PetModel3D
         scene.Lift = new W3.TranslateTransform3D();
         poseTransform.Children.Add(new W3.RotateTransform3D(scene.Sway, new W3.Point3D(0, 2.65, 0))); poseTransform.Children.Add(scene.Lift);
         character.Transform = poseTransform;
-        Ball(character, 0, .88, 0, .7, .71, .54, fur, kind == 3, kind == 3, kind != 3);
-        Ball(character, 0, .87, .49, .4, .43, .075, kind == 3 ? accent : pale, kind == 3, kind == 3);
+        Ball(character, 0, .88, 0, kind == 1 || matcha ? .79 : .7, .71, kind == 1 ? .65 : .54, fur, kind == 3, kind == 3, kind != 3);
+        if (kind == 3)
+        {
+            Ball(character, 0, .9, .48, .43, .29, .11, visor, true, true);
+            Ball(character, 0, .95, .58, .27, .047, .018, accent, true, true);
+            Ball(character, 0, .79, .59, .065, .022, .009, Color.FromArgb(162, 189, 207), true);
+        }
+        else Ball(character, 0, .82, matcha ? .43 : kind == 1 ? .57 : .43, matcha ? .48 : .42, .43, .15,
+            matcha ? Color.FromArgb(208, 228, 151) : kind == 2 ? Color.FromArgb(255, 250, 242) : pale);
         if (kind == 5)
         {
             // 六块面包是独立的圆润网格，烤色外壳、柔软内芯和浅色割纹都有真实厚度。
@@ -234,27 +271,75 @@ public static class PetModel3D
         }
         W3.Model3DGroup leftLeg = Joint(character, new W3.Vector3D(1, 0, 0), new W3.Point3D(-.38, .65, 0), out scene.LeftLeg);
         W3.Model3DGroup rightLeg = Joint(character, new W3.Vector3D(1, 0, 0), new W3.Point3D(.38, .65, 0), out scene.RightLeg);
-        Ball(leftLeg, -.38, .18, .28, .35, .21, .4, fur, kind == 3); Ball(rightLeg, .38, .18, .28, .35, .21, .4, fur, kind == 3);
+        for (int sign = -1; sign <= 1; sign += 2)
+        {
+            W3.Model3DGroup leg = sign < 0 ? leftLeg : rightLeg;
+            double width = matcha ? .39 : kind == 2 ? .3 : .33;
+            Color paw = kind == 0 ? cream : fur;
+            Ball(leg, sign * .39, .17, .30, width, .19, kind == 2 ? .47 : .38, paw, kind == 3, kind == 3, kind != 3);
+            if (kind == 3) Ball(leg, sign * .39, .11, .31, .33, .08, .39, visor, true);
+            if (kind == 0 || kind == 2 || kind == 4 || matcha)
+                for (int toe = -1; toe <= 1; toe += 2)
+                    Ball(leg, sign * .39 + toe * .082, .20, kind == 2 ? .748 : .664, .016, .044, .021,
+                        matcha ? olive : Color.FromArgb(216, 169, 151), tilt: toe * -11);
+        }
         W3.Model3DGroup head = Joint(character, pose == 3 ? new W3.Vector3D(1, 0, 0) : new W3.Vector3D(0, 0, 1), new W3.Point3D(0, 2.05, 0), out scene.Head);
         W3.Transform3DGroup refinedHead = new W3.Transform3DGroup(); refinedHead.Children.Add(new W3.ScaleTransform3D(kind == 3 ? 1.05 : 1.14, 1.08, 1.09, 0, 2.32, 0)); refinedHead.Children.Add(new W3.TranslateTransform3D(0, -.17, 0)); refinedHead.Children.Add(head.Transform); head.Transform = refinedHead;
-        Ball(head, 0, 2.32, 0, kind == 3 ? 1.01 : .94, .73, kind == 3 ? .65 : .73, fur, kind == 3, kind == 3, kind != 3);
+        Ball(head, 0, 2.32, 0, kind == 3 ? 1.01 : matcha ? .79 : .94, matcha ? .65 : .73,
+            kind == 3 ? .65 : .73, fur, kind == 3, kind == 3, kind != 3);
         if (kind == 3)
         {
-            Ball(head, 0, 2.36, .61, .84, .5, .13, Color.FromArgb(22, 45, 66), true, true);
+            Ball(head, 0, 2.36, .58, .88, .54, .15, Color.FromArgb(126, 168, 196), true, true);
+            Ball(head, 0, 2.36, .67, .8, .455, .12, visor, true, true);
+            for (int sign = -1; sign <= 1; sign += 2)
+            {
+                Ball(head, sign * .97, 2.34, -.03, .15, .34, .34, Color.FromArgb(119, 156, 182), true, true);
+                Ball(head, sign * 1.06, 2.34, -.03, .1, .24, .23, accent, true, true);
+            }
             Link(head, new W3.Point3D(0, 3.02, 0), new W3.Point3D(0, 3.42, 0), .04, accent); Ball(head, 0, 3.5, 0, .13, .13, .13, accent, false, true);
         }
         else if (kind == 2)
         {
-            for (int sign = -1; sign <= 1; sign += 2) { Ball(head, sign * .42, 3.37, -.02, .24, .78, .2, fur); Ball(head, sign * .42, 3.4, .16, .13, .56, .06, Color.FromArgb(245, 184, 197)); }
+            for (int sign = -1; sign <= 1; sign += 2)
+            {
+                Ball(head, sign * .53, 3.36, -.13, .23, sign < 0 ? .74 : .7, .19, fur, soft: true, tilt: -sign * 15);
+                Ball(head, sign * .57, 3.43, .02, .13, .54, .065, Color.FromArgb(233, 160, 181), tilt: -sign * 15);
+            }
         }
         else if (kind == 1)
         {
             for (int sign = -1; sign <= 1; sign += 2) { Ball(head, sign * .64, 2.9, -.04, .24, .25, .17, fur); Ball(head, sign * .64, 2.9, .1, .13, .14, .05, pale); }
             Ball(head, 0, 3.12, 0, .27, .21, .26, Color.FromArgb(255, 165, 61)); Ball(head, .13, 3.36, 0, .19, .035, .075, Color.FromArgb(94, 148, 83));
-            Ball(head, 0, 2.07, .65, .73, .36, .34, pale);
-            Ball(head, -.16, 2.14, .97, .07, .045, .035, ink); Ball(head, .16, 2.14, .97, .07, .045, .035, ink);
+            Ball(head, 0, 2.08, .67, .7, .38, .38, pale, soft: true);
+            Ball(head, -.185, 2.18, 1.024, .052, .029, .023, ink, tilt: -18);
+            Ball(head, .185, 2.18, 1.024, .052, .029, .023, ink, tilt: 18);
+            if (!surprised) Curve(head, new[] { new W3.Point3D(-.2, 1.99, 1.01), new W3.Point3D(0, 1.96, 1.043), new W3.Point3D(.2, 1.99, 1.01) }, .015, ink);
         }
-        else { Ear(head, -.6, fur); Ear(head, .6, fur); }
+        else if (matcha)
+        {
+            Ball(head, 0, 2.22, .72, .83, .335, .53, Color.FromArgb(189, 217, 119), soft: true);
+            Ball(head, 0, 2.13, .85, .68, .22, .42, Color.FromArgb(202, 226, 137), soft: true);
+            for (int i = 0; i < 4; i++)
+            {
+                W3.Transform3DGroup plate = new W3.Transform3DGroup();
+                plate.Children.Add(new W3.ScaleTransform3D(.12, .26 - i * .024, .21));
+                plate.Children.Add(new W3.RotateTransform3D(new W3.AxisAngleRotation3D(new W3.Vector3D(1, 0, 0), -i * 20)));
+                plate.Children.Add(new W3.TranslateTransform3D(0, 2.98 - i * .25, -.25 - i * .15));
+                head.Children.Add(new W3.GeometryModel3D(DorsalPlate, Material(olive, false)) { Transform = plate });
+            }
+            for (int sign = -1; sign <= 1; sign += 2)
+            {
+                Ball(head, sign * .28, 2.82, .56, .285, .32, .24, fur);
+                Ball(head, sign * .29, 2.43, 1.111, .027, .014, .027, olive);
+            }
+        }
+        else { Ear(head, -.59, fur); Ear(head, .59, fur); }
+        if (kind == 0)
+        {
+            Color mark = Color.FromArgb(221, 143, 78);
+            for (int sign = -1; sign <= 1; sign += 2)
+                Curve(head, new[] { new W3.Point3D(sign * .31, 2.995, .385), new W3.Point3D(sign * .29, 2.935, .50), new W3.Point3D(sign * .25, 2.87, .582) }, .025, mark);
+        }
         if (kind == 5)
         {
             Color stripe = Color.FromArgb(94, 68, 45);
@@ -294,40 +379,77 @@ public static class PetModel3D
             }
         }
         W3.Model3DGroup eyesLeft = new W3.Model3DGroup(), eyesRight = new W3.Model3DGroup();
-        scene.EyeLeft = new W3.ScaleTransform3D(1, 1, 1, -.34, 2.4, .75); scene.EyeRight = new W3.ScaleTransform3D(1, 1, 1, .34, 2.4, .75);
+        double eyeX = matcha ? .28 : kind == 1 ? .51 : .34;
+        double eyeY = matcha ? 2.84 : 2.42;
+        scene.EyeLeft = new W3.ScaleTransform3D(1, 1, 1, -eyeX, eyeY, .75);
+        scene.EyeRight = new W3.ScaleTransform3D(1, 1, 1, eyeX, eyeY, .75);
         eyesLeft.Transform = scene.EyeLeft; eyesRight.Transform = scene.EyeRight; head.Children.Add(eyesLeft); head.Children.Add(eyesRight);
         for (int sign = -1; sign <= 1; sign += 2)
         {
             W3.Model3DGroup eyes = sign < 0 ? eyesLeft : eyesRight;
-            if (kind == 3 && surprised) Ball(eyes, sign * .36, 2.42, .774, .075, .14, .025, accent, false, true);
-            else if (kind == 3) Curve(eyes, new[] { new W3.Point3D(sign * .36 - .1, 2.38, .768), new W3.Point3D(sign * .36 - .065, 2.46, .774), new W3.Point3D(sign * .36 + .065, 2.46, .774), new W3.Point3D(sign * .36 + .1, 2.38, .768) }, .028, accent);
+            if (kind == 3)
+            {
+                Ball(eyes, sign * .34, 2.44, .798, surprised ? .075 : .104, surprised ? .14 : .09, .024, accent, true, true);
+                Ball(eyes, sign * .34 - .027, 2.47, .821, .038, .019, .01, Color.FromArgb(225, 247, 251), true);
+            }
+            else if (matcha)
+            {
+                double x = sign * eyeX, pupilX = x + .025, pupilY = eyeY + .068;
+                Color eyeRim = Color.FromArgb(101, 132, 58), pupil = Color.FromArgb(64, 90, 41);
+                Ball(eyes, x, eyeY, .748, .236, .244, .088, eyeRim, soft: true);
+                Ball(eyes, x, eyeY + .008, .802, .212, .221, .078, cream);
+                Ball(eyes, pupilX, pupilY, .878, .078, .085, .029, pupil, polished: true);
+                Ball(eyes, pupilX - .026, pupilY + .028, .903, .019, .02, .009, Color.White);
+            }
             else
             {
-                double x = sign * (kind == 1 ? .51 : .34), z = kind == 1 ? .673 : .72;
-                if (kind != 1) z = .716;
+                double x = sign * eyeX, z = kind == 1 ? .69 : .716;
                 if (kind == 5)
                 {
                     Ball(eyes, x, 2.42, z, .13, surprised ? .17 : .14, .035, Color.FromArgb(190, 151, 73), false, true);
                     Ball(eyes, x, 2.42, z + .032, surprised ? .07 : .045, surprised ? .12 : .095, .018, Color.FromArgb(41, 33, 27), false, true);
                     Ball(eyes, x - .028, 2.47, z + .05, .022, .024, .008, Color.White);
                 }
-                else { Ball(eyes, x, 2.42, z, surprised ? .095 : .072, surprised ? .14 : .095, .025, ink, false, true); Ball(eyes, x - .014, 2.45, z + .024, .016, .019, .008, Color.White); }
-                Ball(head, sign * .63, 2.19, .56, .14, .07, .025, Color.FromArgb(244, 183, 174));
+                else
+                {
+                    double radius = kind == 1 ? .087 : .105;
+                    Ball(eyes, x, 2.42, z, radius, surprised ? .155 : radius * 1.28, .041, ink, polished: true);
+                    Ball(eyes, x - .032, 2.463, z + .037, .024, .027, .011, Color.White);
+                    Ball(eyes, x + .029, 2.373, z + .033, .012, .012, .009, Color.FromArgb(238, 201, 177));
+                }
+                if (kind != 1) Ball(head, sign * .63, 2.18, .558, .14, .063, .036, Color.FromArgb(245, 176, 164), tilt: sign * 10);
             }
         }
         if (surprised)
         {
-            if (kind != 3 && kind != 1) Ball(head, 0, 2.12, .7, .36, .24, .17, pale);
+            if (kind != 3 && kind != 1 && !matcha) Ball(head, 0, 2.12, .7, .36, .24, .17, pale);
+            double mouthY = matcha ? 2.11 : kind == 1 ? 1.98 : kind == 3 ? 2.14 : 2.075;
+            double mouthZ = matcha ? 1.28 : kind == 1 ? 1.055 : kind == 3 ? .791 : .88;
             W3.Point3D[] mouth = new W3.Point3D[17];
-            for (int i = 0; i < mouth.Length; i++) { double a = i * Math.PI * 2 / 16; mouth[i] = new W3.Point3D(Math.Cos(a) * .065, (kind == 1 ? 1.98 : kind == 3 ? 2.14 : 2.075) + Math.Sin(a) * .09, kind == 1 ? 1.005 : kind == 3 ? .774 : .88); }
-            scene.Mouth = new W3.ScaleTransform3D(1, 1, 1, 0, kind == 1 ? 1.98 : kind == 3 ? 2.14 : 2.075, 0);
+            for (int i = 0; i < mouth.Length; i++) { double a = i * Math.PI * 2 / 16; mouth[i] = new W3.Point3D(Math.Cos(a) * .065, mouthY + Math.Sin(a) * .09, mouthZ); }
+            scene.Mouth = new W3.ScaleTransform3D(1, 1, 1, 0, mouthY, 0);
             W3.Model3DGroup movingMouth = new W3.Model3DGroup { Transform = scene.Mouth }; head.Children.Add(movingMouth);
             Curve(movingMouth, mouth, .018, kind == 3 ? accent : ink);
         }
-        else if (kind == 3) Curve(head, new[] { new W3.Point3D(-.16, 2.17, .77), new W3.Point3D(-.08, 2.11, .77), new W3.Point3D(.08, 2.11, .77), new W3.Point3D(.16, 2.17, .77) }, .023, accent);
+        else if (kind == 3) Curve(head, new[] { new W3.Point3D(-.16, 2.17, .791), new W3.Point3D(-.08, 2.11, .791), new W3.Point3D(.08, 2.11, .791), new W3.Point3D(.16, 2.17, .791) }, .021, accent);
+        else if (matcha)
+        {
+            W3.Point3D[] smile = new W3.Point3D[13];
+            for (int i = 0; i < smile.Length; i++)
+            {
+                double x = (i - 6) * .113, y = 2.09 + .175 * Math.Pow(x / .678, 2) - .024 * x;
+                double upper = .72 + .53 * Math.Pow(Math.Max(0, 1 - Math.Pow(Math.Abs(x / .83), 2 / .78) - Math.Pow(Math.Abs((y - 2.22) / .335), 2 / .78)), .78 / 2);
+                double lower = .85 + .42 * Math.Pow(Math.Max(0, 1 - Math.Pow(Math.Abs(x / .68), 2 / .78) - Math.Pow(Math.Abs((y - 2.13) / .22), 2 / .78)), .78 / 2);
+                smile[i] = new W3.Point3D(x, y, Math.Max(upper, lower) + .009);
+            }
+            Curve(head, smile, .022, olive);
+        }
         else if (kind != 1)
         {
-            Ball(head, 0, 2.12, .7, .36, .24, .17, pale); Ball(head, 0, 2.17, .87, .065, .045, .035, Color.FromArgb(165, 111, 115));
+            Color muzzle = kind == 5 ? Color.FromArgb(243, 209, 167) : cream;
+            Ball(head, -.14, 2.105, .688, .29, .185, .199, muzzle, soft: true);
+            Ball(head, .14, 2.105, .688, .29, .185, .199, muzzle, soft: true);
+            Ball(head, 0, 2.178, .868, kind == 2 ? .058 : .077, .049, .031, Color.FromArgb(163, 100, 108), soft: true);
             Curve(head, new[] { new W3.Point3D(-.15, 2.08, .855), new W3.Point3D(-.09, 2.04, .88), new W3.Point3D(0, 2.075, .891), new W3.Point3D(.09, 2.04, .88), new W3.Point3D(.15, 2.08, .855) }, .014, ink);
         }
         W3.Model3DGroup left = Joint(character, pose == 5 || kind == 5 && pose == 0 ? new W3.Vector3D(0, 0, 1) : new W3.Vector3D(1, 0, 0), new W3.Point3D(-.55, 1.45, 0), out scene.LeftArm);
@@ -336,7 +458,7 @@ public static class PetModel3D
         {
             W3.Model3DGroup arm = sign < 0 ? left : right;
             W3.Point3D shoulder = new W3.Point3D(sign * .52, 1.27, .03);
-            W3.Point3D hand = pose == 5 ? new W3.Point3D(sign * .85, .91, .23) : pose == 4 ? new W3.Point3D(sign * .89, 2.58, .7) : pose == 3 ? new W3.Point3D(sign * .42, 1.23, 1.06) : pose == 2 ? new W3.Point3D(sign * .29, 1.34, .92) : kind == 5 ? new W3.Point3D(sign * 1.12, 2.16, .15) : kind == 4 && sign > 0 ? new W3.Point3D(.92, 1.95, .23) : new W3.Point3D(sign * .65, .81, .28);
+            W3.Point3D hand = pose == 5 ? new W3.Point3D(sign * .85, .91, .23) : pose == 4 ? new W3.Point3D(sign * .89, 2.58, .7) : pose == 3 ? new W3.Point3D(sign * .42, 1.23, 1.06) : pose == 2 ? new W3.Point3D(sign * .29, 1.34, .92) : kind == 5 ? new W3.Point3D(sign * 1.12, 2.16, .15) : kind == 4 && sign > 0 ? new W3.Point3D(1.1, 2.25, .34) : new W3.Point3D(sign * .65, .81, .28);
             if (kind == 5 && pose == 0)
             {
                 W3.Point3D elbow = new W3.Point3D(sign * 1.12, 1.37, .02);
@@ -352,19 +474,40 @@ public static class PetModel3D
                 Curve(arm, new[] { new W3.Point3D(x - .11, y - .035, z + .27), new W3.Point3D(x, y + .025, z + .286), new W3.Point3D(x + .1, y + .075, z + .27) }, .017, Color.FromArgb(255, 219, 153));
             }
             if (pose == 4) Ball(arm, hand.X, hand.Y, hand.Z, .26, .2, .2, fur, kind == 3);
-            if (kind == 4 && sign > 0 && pose == 0) Ball(arm, hand.X, hand.Y, hand.Z + .2, .09, .09, .02, Color.FromArgb(245, 180, 175));
+            if (kind == 4 && sign > 0 && pose == 0)
+            {
+                Ball(arm, hand.X, hand.Y, hand.Z, .235, .24, .20, fur, soft: true);
+                Ball(arm, hand.X, hand.Y - .02, hand.Z + .19, .093, .083, .022, Color.FromArgb(234, 154, 151));
+                for (int toe = -1; toe <= 1; toe++)
+                    Ball(arm, hand.X + toe * .078, hand.Y + .105, hand.Z + .162, .027, .033, .022, Color.FromArgb(234, 154, 151));
+            }
         }
         W3.Model3DGroup tail = Joint(character, new W3.Vector3D(0, 1, 0), new W3.Point3D(.4, .7, -.35), out scene.Tail);
         if (kind == 0 || kind == 4 || kind == 5) Curve(tail, new[] { new W3.Point3D(.4, .65, -.35), new W3.Point3D(.9, .65, -.4), new W3.Point3D(1.18, .85, -.3), new W3.Point3D(1.25, 1.23, -.25) }, .14, fur);
         if (kind == 5) for (int ring = 0; ring < 3; ring++) Ball(tail, 1.19 + ring * .025, .91 + ring * .12, -.29 + ring * .015, .143, .037, .143, Color.FromArgb(94, 68, 45));
         if (kind == 2) Ball(tail, 0, .6, -.54, .27, .27, .24, fur);
-        if (kind != 3 && kind != 5)
+        if (matcha)
+        {
+            Ball(tail, .38, .46, -.64, .43, .205, .31, fur, soft: true, tilt: 10);
+            Ball(tail, .71, .47, -.81, .36, .153, .21, fur, soft: true, tilt: 16);
+            Ball(tail, .965, .55, -.885, .25, .115, .139, fur, tilt: 32);
+            Ball(tail, .55, .59, -.8, .115, .09, .118, olive, tilt: 12);
+            Ball(tail, .81, .59, -.886, .083, .072, .092, olive, tilt: 18);
+            Ball(character, 0, 1.31, -.48, .14, .24, .16, olive, tilt: -12);
+            Ball(character, 0, .95, -.54, .13, .2, .15, olive, tilt: -16);
+        }
+        if (kind != 3 && kind != 5 && !matcha)
         {
             Color collar = kind == 4 ? Color.FromArgb(214, 68, 71) : accent;
             Curve(character, new[] { new W3.Point3D(-.43, 1.64, .28), new W3.Point3D(-.25, 1.57, .48), new W3.Point3D(0, 1.54, .53), new W3.Point3D(.25, 1.57, .48), new W3.Point3D(.43, 1.64, .28) }, .045, collar);
             Ball(character, 0, 1.48, .58, .12, .13, .07, Color.FromArgb(246, 194, 66), false, true);
         }
-        if (kind == 4) { Ball(character, 0, .95, .56, .4, .45, .1, Color.FromArgb(245, 193, 58), false, true); Fortune(character); }
+        if (kind == 4)
+        {
+            Ball(character, 0, .95, .543, .422, .47, .12, Color.FromArgb(185, 119, 38), polished: true);
+            Ball(character, 0, .95, .588, .37, .418, .08, Color.FromArgb(251, 198, 73), polished: true);
+            Fortune(character);
+        }
         if (pose == 2)
         {
             Ball(character, 0, 1.53, .91, .25, .4, .045, Color.FromArgb(51, 65, 82), true, true);
@@ -397,7 +540,8 @@ public static class PetModel3D
             g.TranslateTransform(100, 95);
             g.RotateTransform(edge == 1 ? 90 : edge == 2 ? -90 : edge == 3 ? 180 : 0);
             if (edge <= 2) g.ScaleTransform(.94f, .94f);
-            g.DrawImage(character, new RectangleF(-100, -95 + (float)(106 * (1 - Math.Max(0, Math.Min(1, reveal)))), 200, 190));
+            double hiddenOffset = kind == PetArt.Beagle ? (edge <= 2 ? 132 : 122) : 106;
+            g.DrawImage(character, new RectangleF(-100, -95 + (float)(hiddenOffset * (1 - Math.Max(0, Math.Min(1, reveal)))), 200, 190));
         }
         return result;
     }
@@ -415,6 +559,12 @@ public static class PetModel3D
         string animationKey = pose + ":" + phase + ":" + walking; Bitmap cached;
         bool cacheFrame = !surprised || Math.Abs(dragLean) < .05;
         if (cacheFrame && AnimationFrames.TryGetValue(animationKey, out cached)) return (Bitmap)cached.Clone();
+        if (kind == PetArt.Beagle)
+        {
+            Bitmap drawing = BeagleArt.Render(theme, phase, pose, yaw, walking, pixelWidth, dragLean);
+            if (cacheFrame) { AnimationFrames.Add(animationKey, drawing); return (Bitmap)drawing.Clone(); }
+            return drawing;
+        }
         string key = kind + ":" + theme + ":" + pose + ":" + surprised; Scene scene;
         if (!Scenes.TryGetValue(key, out scene)) { scene = Build(kind, theme, pose, surprised); Scenes.Add(key, scene); }
         double t = phase * Math.PI * 2 / 48, eye = pose == 1 || phase >= 44 && phase <= 46 ? .07 : 1;
