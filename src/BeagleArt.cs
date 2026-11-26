@@ -3,7 +3,7 @@ using System.Drawing;
 using System.Drawing.Drawing2D;
 using System.Drawing.Imaging;
 
-internal static class BeagleArt
+internal static partial class StickerArt
 {
     private static readonly Color Ink = Color.FromArgb(50, 45, 40);
     private static readonly Color Fur = Color.FromArgb(213, 164, 101);
@@ -11,14 +11,14 @@ internal static class BeagleArt
     private static readonly Color Cream = Color.FromArgb(255, 250, 237);
     private static readonly Color Black = Color.FromArgb(30, 31, 29);
 
-    public static Bitmap Render(int theme, int phase, int pose, double yaw, bool walking, int width, double lean)
+    private static Bitmap RenderBeagle(int theme, int phase, int pose, double yaw, bool walking, int width, double lean)
     {
         Bitmap result = new Bitmap(width, Math.Max(1, (int)Math.Round(width * .95)), PixelFormat.Format32bppPArgb);
         using (Graphics g = Graphics.FromImage(result))
         {
             g.SmoothingMode = SmoothingMode.AntiAlias;
             g.ScaleTransform(width / 142f, result.Height / 135f);
-            if (pose != 4 && yaw >= 180)
+            if (yaw >= 180)
             {
                 g.TranslateTransform(142, 0);
                 g.ScaleTransform(-1, 1);
@@ -33,7 +33,7 @@ internal static class BeagleArt
                 Ellipse(g, accent, 14, 95, 111, 21);
                 g.TranslateTransform(0, 7);
             }
-            else if (pose == 4) g.TranslateTransform(0, -15);
+            else if (pose == 4) g.TranslateTransform(0, -13);
             else if (pose == 5)
             {
                 g.TranslateTransform(72, 66);
@@ -81,11 +81,15 @@ internal static class BeagleArt
             Shape(g, Fur, 38, 75, 26, 75, 23, 67, 22, 57, 22, 53, 22, 51, 24, 51, 27, 53, 25, 61, 31, 64, 33, 65, 37, 65, 43, 65, 43, 70, 41, 73, 38, 75);
             g.Restore(tail);
         }
+        if (pose != 4)
+        {
         Shape(g, Cream, 15, 91, 14, 92, 17, 86, 23, 84, 26, 81, 27, 77, 31, 74, 37, 69, 48, 69, 59, 70, 67, 73, 72, 78, 75, 85, 83, 86, 88, 91, 85, 96, 80, 104, 63, 105, 51, 104, 44, 102, 39, 100, 35, 101, 29, 105, 19, 104, 17, 102, 16, 100, 17, 97, 21, 95, 18, 95, 15, 94, 15, 91);
         Shape(g, Ear, 29, 80, 34, 72, 41, 70, 51, 70, 56, 71, 61, 73, 64, 77, 58, 81, 51, 82, 46, 85, 43, 83, 36, 79, 29, 80);
         Shape(g, Color.Empty, 30, 91, 31, 88, 31, 84, 30, 82);
         Shape(g, Color.Empty, 21, 94, 25, 94, 28, 93, 29, 91);
         Shape(g, Color.Empty, 45, 88, 45, 93, 50, 100, 56, 101);
+
+        }
 
         GraphicsState head = g.Save();
         if (pose == 5)
@@ -107,10 +111,10 @@ internal static class BeagleArt
 
         if (pose == 4)
         {
-            g.TranslateTransform(0, -12);
+            g.TranslateTransform(2, 5);
             Shape(g, Cream, 39, 72, 34, 67, 30, 65, 28, 68, 25, 71, 28, 76, 32, 78, 35, 79, 38, 77, 39, 72);
             Shape(g, Cream, 110, 75, 112, 69, 116, 67, 120, 69, 123, 71, 121, 77, 117, 80, 114, 82, 111, 79, 110, 75);
-            g.TranslateTransform(0, 12);
+            g.TranslateTransform(-2, -5);
             return;
         }
         Shape(g, Cream, 84, 99, 83, 97, 84, 94, 89, 92, 90, 88, 94, 86, 97, 88, 100, 89, 102, 93, 101, 97, 100, 101, 96, 105, 91, 105, 87, 105, 85, 103, 84, 99);

@@ -9,9 +9,9 @@ public static class PetInputTests
     {
         // 回归现场异常栈：贴墙绘制不能把零尺寸传给Bitmap构造函数。
         for (int edge = 1; edge <= 4; edge++)
-        using (Bitmap image = PetModel3D.RenderDocked(0, 0, 0, edge, 0, 0))
+        using (Bitmap image = PetArt.RenderDocked(PetArt.Beagle, 0, 0, edge, 0, 0))
             check(image.Width == 1 && image.Height == 1, "A zero-width docking frame is safe on edge " + edge);
-        using (Bitmap image = PetModel3D.Render(0, 0, 0, 0, 25, 12, false, false, false, 0))
+        using (Bitmap image = PetArt.Render(PetArt.Beagle, 0, 0, 0, 25, false, false, 0))
             check(image.Width == 1 && image.Height == 1, "The free-pet renderer also protects zero-width frames");
         using (ContextMenuStrip menu = new ContextMenuStrip())
         using (DesktopPet pet = new DesktopPet(new Settings { PetDockEdge = 2, PetWalk = false }, delegate { }, delegate(Point point) { }, menu))

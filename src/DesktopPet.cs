@@ -5,17 +5,6 @@ using System.Drawing.Imaging;
 using System.Runtime.InteropServices;
 using System.Windows.Forms;
 
-public static class PetArt
-{
-    public const int Beagle = 6, Matcha = 7;
-    public static readonly string[] Names = { "猫咪", "卡皮巴拉", "小兔子", "小机器人", "招财猫", "面包猫", "比格狗", "抹茶旦旦" };
-    public static Bitmap Render(int kind, int theme, int frame, bool walking, bool speaking)
-    {
-        return PetModel3D.Render(kind, theme, frame, 0, 25, 12, walking, speaking);
-    }
-}
-
-
 // 预览与点击固定的详情分开管理，拖动或点击后的同一次悬停不会反复弹出预览。
 public sealed class PetHoverState
 {
@@ -67,7 +56,7 @@ public sealed class DesktopPet : Form
     private Point down;
     private PointF grab;
     private bool dragging, rotating, travelled;
-    private double yaw, pitch, downYaw, downPitch;
+    private double yaw, pitch, downYaw;
     private int frame, direction = -1;
     private int dockEdge;
     private bool dockExpanded;
@@ -75,6 +64,7 @@ public sealed class DesktopPet : Form
     private bool fitting, perMonitorDpi;
     private Rectangle displayArea;
     public int DockEdge { get { return dockEdge; } }
+    public Rectangle BubbleAnchor { get { return PetArt.DockAnchor(Bounds, dockEdge, dockReveal); } }
     public bool Speaking, Paused;
     public int CurrentPose { get { return behavior.Current; } }
     [StructLayout(LayoutKind.Sequential)] private struct XY { public int X, Y; public XY(int x, int y) { X = x; Y = y; } }
@@ -146,16 +136,16 @@ public sealed class DesktopPet : Form
             if (Paused || (e.Button != MouseButtons.Left && e.Button != MouseButtons.Right)) return;
             hover.Suppress(); RefreshHover();
             dragging = e.Button == MouseButtons.Left; rotating = e.Button == MouseButtons.Right;
-            travelled = false; down = Cursor.Position; grab = new PointF(e.X / (float)Width, e.Y / (float)Height); downYaw = yaw; downPitch = pitch; Capture = true;
+            travelled = false; down = Cursor.Position; grab = new PointF(e.X / (float)Width, e.Y / (float)Height); downYaw = yaw; Capture = true;
             dragLast = down; dragImpulse = 0;
         };
         MouseMove += delegate
         {
             if (!dragging && !rotating) return;
             int x = Cursor.Position.X - down.X, y = Cursor.Position.Y - down.Y;
-            if (Math.Abs(x) + Math.Abs(y) > 5) travelled = true;
+            if (rotating ? Math.Abs(x) > 5 : Math.Abs(x) + Math.Abs(y) > 5) travelled = true;
             if (!travelled) return;
-            if (rotating) { yaw = ((downYaw + x * .7) % 360 + 360) % 360; pitch = Math.Max(-25, Math.Min(60, downPitch + y * .45)); }
+            if (rotating) yaw = Math.Abs(x) > 5 ? (x < 0 ? 205 : 25) : downYaw;
             else
             {
                 dragImpulse = Math.Max(-10, Math.Min(10, (Cursor.Position.X - dragLast.X) * 45.0 / Width)); dragLast = Cursor.Position;
@@ -268,8 +258,8 @@ public sealed class DesktopPet : Form
         lastDraw = DateTime.UtcNow;
         int pose = behavior.Update(settings.PetPose, DateTime.Now, dockEdge != 0 || dragMotion.Amount > 0 || Paused || Speaking || dragging || rotating || hover.Inside);
         double amount = dockEdge == 0 ? dragMotion.Amount : 0;
-        using (Bitmap character = dockEdge != 0 ? PetModel3D.RenderDocked(settings.PetCharacter, settings.Theme, frame, dockEdge, dockReveal, Math.Min(300, renderSize.Width)) : amount < 1 ? PetModel3D.Render(settings.PetCharacter, settings.Theme, frame, pose, yaw, pitch, walking, Speaking, false, Math.Min(300, renderSize.Width)) : null)
-        using (Bitmap lifted = amount > 0 ? PetModel3D.Render(settings.PetCharacter, settings.Theme, frame, pose, yaw, pitch, false, Speaking, true, Math.Min(300, renderSize.Width), dragMotion.Lean) : null)
+        using (Bitmap character = dockEdge != 0 ? PetArt.RenderDocked(settings.PetCharacter, settings.Theme, frame, dockEdge, dockReveal, Math.Min(300, renderSize.Width), yaw) : amount < 1 ? PetArt.Render(settings.PetCharacter, settings.Theme, frame, pose, walking && direction < 0 ? 205 : walking ? 25 : yaw, walking, false, Math.Min(300, renderSize.Width)) : null)
+        using (Bitmap lifted = amount > 0 ? PetArt.Render(settings.PetCharacter, settings.Theme, frame, pose, yaw, false, true, Math.Min(300, renderSize.Width), dragMotion.Lean) : null)
         using (Bitmap bitmap = new Bitmap(renderSize.Width, renderSize.Height, PixelFormat.Format32bppPArgb))
         {
             using (Graphics graphics = Graphics.FromImage(bitmap))
@@ -300,10 +290,11 @@ public sealed class DesktopPet : Form
     public static void PlaceBeside(Form window, Rectangle petBounds)
     {
         Rectangle area = Screen.FromRectangle(petBounds).WorkingArea;
-        int x = petBounds.Left - window.Width + 22;
-        if (x < area.Left) x = petBounds.Right - 22;
         ReminderPopup bubble = window as ReminderPopup;
-        int y = bubble == null ? petBounds.Top - 30 : petBounds.Top + petBounds.Height / 3 - window.Height / 2;
+        int gap = bubble == null ? -22 : 8;
+        int x = petBounds.Left - window.Width - gap;
+        if (x < area.Left) x = petBounds.Right + gap;
+        int y = bubble == null ? petBounds.Top - 30 : petBounds.Top + petBounds.Height / 2 - window.Height / 2;
         window.Location = new Point(Math.Max(area.Left, Math.Min(x, area.Right - window.Width)), Math.Max(area.Top, Math.Min(y, area.Bottom - window.Height)));
         if (bubble != null) bubble.AimAtPet(petBounds);
     }

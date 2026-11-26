@@ -31,7 +31,7 @@ public class Settings
     public List<AbsenceEntry> Absences = new List<AbsenceEntry>();
     public decimal PersonalLeavePercent = 0, SickLeavePercent = -1, AnnualLeavePercent = 100;
     public bool PetEnabled = true, PetWalk = false;
-    public int PetCharacter = 0, PetX = int.MinValue, PetY = int.MinValue;
+    public int PetCharacter = PetArt.Beagle, PetX = int.MinValue, PetY = int.MinValue;
     public int PetPose = -1;
     public int PetDockEdge = 0; // 0自由，1左、2右、3上、4下；独立于用户选择的四种姿态。
     public int PetScale = 100;
@@ -66,11 +66,16 @@ public class Settings
         if (WaterIntervalMinutes < 1 || WaterIntervalMinutes > 1440 || RestroomIntervalMinutes < 1 || RestroomIntervalMinutes > 1440)
             throw new Exception("喝水和如厕间隔需在1至1440分钟之间。");
         if (WidgetSize < 0 || WidgetSize > 1) throw new Exception("挂件大小设置无效。");
-        if (PetCharacter < 0 || PetCharacter >= PetArt.Names.Length) throw new Exception("桌宠形象设置无效。");
+        if (Array.IndexOf(PetArt.Characters, PetCharacter) < 0)
+        {
+            // 旧版移除的四个编号回退到比格，其他配置继续加载。
+            if (PetCharacter != 0 && PetCharacter != 1 && PetCharacter != 2 && PetCharacter != 5) throw new Exception("桌宠形象设置无效。");
+            PetCharacter = PetArt.Beagle;
+        }
         if (PetDockEdge < 0 || PetDockEdge > 4) throw new Exception("桌宠贴墙位置无效。");
         if (PetScale < 50 || PetScale > 150) throw new Exception("桌宠大小需在50%至150%之间。");
         if (PetPose < -1 || PetPose > 3 || double.IsNaN(PetYaw) || double.IsInfinity(PetYaw) || PetYaw < 0 || PetYaw >= 360 || double.IsNaN(PetPitch) || double.IsInfinity(PetPitch) || PetPitch < -25 || PetPitch > 60)
-            throw new Exception("三维视角或姿态设置无效。");
+            throw new Exception("桌宠朝向或姿态设置无效。");
         HashSet<string> order = new HashSet<string>((DetailOrder ?? "").Split(','));
         if (order.Count != DetailCard.Keys.Length || (DetailOrder ?? "").Split(',').Length != DetailCard.Keys.Length) throw new Exception("详情组件顺序无效。");
         foreach (string key in DetailCard.Keys) if (!order.Contains(key)) throw new Exception("详情组件顺序无效。");
@@ -325,7 +330,7 @@ public sealed class SettingsForm : Form
         foreach (Control control in Controls) if (control.Top >= 491) control.Top += 44;
         LabelAt("桌宠形象", 24, 491, 105);
         petCharacter = new ComboBox { Name = "PetCharacter", Location = new Point(130, 488), Width = 175, DropDownStyle = ComboBoxStyle.DropDownList };
-        petCharacter.Items.AddRange(PetArt.Names); petCharacter.SelectedIndex = settings.PetCharacter; Controls.Add(petCharacter);
+        petCharacter.Items.AddRange(PetArt.Names); petCharacter.SelectedIndex = Array.IndexOf(PetArt.Characters, settings.PetCharacter); Controls.Add(petCharacter);
         petEnabled = new CheckBox { Name = "PetEnabled", Text = "启用桌宠", Location = new Point(315, 491), Size = new Size(126, 29), Checked = settings.PetEnabled }; Controls.Add(petEnabled);
         foreach (Control control in Controls) if (control.Top >= 535) control.Top += 86;
         LabelAt("桌宠大小", 24, 535, 105);
@@ -410,7 +415,7 @@ public sealed class SettingsForm : Form
             next.RemindersEnabled = reminders.Checked; next.ReminderMode = reminderMode.SelectedIndex;
             next.WaterIntervalMinutes = (int)waterInterval.Value; next.RestroomIntervalMinutes = (int)restroomInterval.Value;
             next.DailySummaryEnabled = dailySummary.Checked;
-            next.PetEnabled = petEnabled.Checked; next.PetCharacter = petCharacter.SelectedIndex;
+            next.PetEnabled = petEnabled.Checked; next.PetCharacter = PetArt.Characters[petCharacter.SelectedIndex];
             next.WidgetSize = widgetSize.SelectedIndex;
             next.PetScale = petScale.Value;
             try
@@ -586,7 +591,7 @@ public sealed class Widget : Form
         ToolStripMenuItem characters = new ToolStripMenuItem("切换桌宠形象");
         for (int i = 0; i < PetArt.Names.Length; i++)
         {
-            int choice = i;
+            int choice = PetArt.Characters[i];
             ToolStripMenuItem item = new ToolStripMenuItem(PetArt.Names[i]);
             item.Click += delegate
             {
@@ -597,10 +602,10 @@ public sealed class Widget : Form
         }
         menu.Items.Add(characters);
         ToolStripMenuItem poses = new ToolStripMenuItem("桌宠状态");
-        for (int i = -1; i < PetModel3D.PoseNames.Length; i++)
+        for (int i = -1; i < PetArt.PoseNames.Length; i++)
         {
             int pose = i;
-            ToolStripMenuItem item = new ToolStripMenuItem(i == -1 ? "随机（10–20秒切换）" : PetModel3D.PoseNames[i]);
+            ToolStripMenuItem item = new ToolStripMenuItem(i == -1 ? "随机（10–20秒切换）" : PetArt.PoseNames[i]);
             item.Click += delegate
             {
                 Settings next = settings.Copy(); next.PetPose = pose;
@@ -609,10 +614,10 @@ public sealed class Widget : Form
             poses.DropDownItems.Add(item);
         }
         menu.Items.Add(poses);
-        menu.Items.Add("重置三维视角", null, delegate
+        menu.Items.Add("重置桌宠朝向", null, delegate
         {
             Settings next = settings.Copy(); next.PetYaw = 25; next.PetPitch = 12;
-            try { Storage.Save(next); settings = next; ApplyPet(); } catch (Exception ex) { MessageBox.Show(this, ex.Message, "视角未保存"); }
+            try { Storage.Save(next); settings = next; ApplyPet(); } catch (Exception ex) { MessageBox.Show(this, ex.Message, "朝向未保存"); }
         });
         ToolStripMenuItem petMode = new ToolStripMenuItem("启用桌宠模式");
         petMode.Click += delegate
@@ -649,10 +654,10 @@ public sealed class Widget : Form
         {
             privacy.Checked = settings.PrivacyMode;
             petMode.Checked = settings.PetEnabled; walk.Checked = settings.PetWalk;
-            for (int i = 0; i < characters.DropDownItems.Count; i++) ((ToolStripMenuItem)characters.DropDownItems[i]).Checked = settings.PetCharacter == i;
-            poses.DropDownItems[1].Text = settings.PetCharacter == PetArt.Beagle ? "闲置趴着" : PetModel3D.PoseNames[0];
+            for (int i = 0; i < characters.DropDownItems.Count; i++) ((ToolStripMenuItem)characters.DropDownItems[i]).Checked = settings.PetCharacter == PetArt.Characters[i];
+            poses.DropDownItems[1].Text = PetArt.PoseName(settings.PetCharacter, 0);
             for (int i = 0; i < poses.DropDownItems.Count; i++) ((ToolStripMenuItem)poses.DropDownItems[i]).Checked = settings.PetPose == i - 1;
-            poses.Text = "桌宠状态" + (pet == null ? "" : " · " + PetModel3D.PoseNames[pet.CurrentPose]);
+            poses.Text = "桌宠状态" + (pet == null ? "" : " · " + PetArt.PoseName(settings.PetCharacter, pet.CurrentPose));
             hoverEnabled.Checked = settings.HoverEnabled;
             HashSet<string> hoverKeys = new HashSet<string>((settings.HoverVisible ?? "").Split(','));
             for (int i = 0; i < DetailCard.Keys.Length; i++) ((ToolStripMenuItem)hoverOptions.DropDownItems[i + 2]).Checked = hoverKeys.Contains(DetailCard.Keys[i]);
@@ -692,8 +697,8 @@ public sealed class Widget : Form
         ApplySize();
         timer.Interval = 100; timer.Tick += delegate
         {
-            if (reminderPopup != null && !reminderPopup.IsDisposed && pet != null && pet.Visible) DesktopPet.PlaceBeside(reminderPopup, pet.Bounds);
-            if (hoverPopup != null && !hoverPopup.IsDisposed && pet != null && pet.Visible) DesktopPet.PlaceBeside(hoverPopup, pet.Bounds);
+            if (reminderPopup != null && !reminderPopup.IsDisposed && pet != null && pet.Visible) DesktopPet.PlaceBeside(reminderPopup, pet.BubbleAnchor);
+            if (hoverPopup != null && !hoverPopup.IsDisposed && pet != null && pet.Visible) DesktopPet.PlaceBeside(hoverPopup, pet.BubbleAnchor);
             if (!Visible) return;
             Snapshot current = WorkClock.At(settings, DateTime.Now);
             foreach (Control control in detailBody.Controls) { DetailCard cardControl = control as DetailCard; if (cardControl != null) cardControl.UpdateView(settings, current); }
@@ -730,10 +735,10 @@ public sealed class Widget : Form
         if (summary && settings.PrivacyMode) message = SummaryMessage(settings, DateTime.Now);
         ShowHoverInfo(false);
         if (reminderPopup != null) reminderPopup.Close();
-        ReminderPopup popup = new ReminderPopup(message, settings.Theme, summary, settings.PetEnabled ? PetArt.Names[settings.PetCharacter] : null); reminderPopup = popup;
+        ReminderPopup popup = new ReminderPopup(message, settings.Theme, summary, settings.PetEnabled ? PetArt.NameOf(settings.PetCharacter) : null); reminderPopup = popup;
         if (settings.PetEnabled)
         {
-            ApplyPet(); pet.Speaking = true; DesktopPet.PlaceBeside(popup, pet.Bounds);
+            ApplyPet(); pet.Speaking = true; DesktopPet.PlaceBeside(popup, pet.BubbleAnchor);
         }
         popup.FormClosed += delegate { popup.Dispose(); if (reminderPopup == popup) reminderPopup = null; if (pet != null) pet.Speaking = false; };
         popup.Show();
@@ -835,7 +840,7 @@ public sealed class Widget : Form
         if (hoverPopup != null && !hoverPopup.IsDisposed) { hoverPopup.SetMessage(message); return; }
         ReminderPopup popup = new ReminderPopup(message, settings.Theme, false, null, false) { Text = "悬浮信息 · 上班鼓励器", Name = "HoverInfo" }; hoverPopup = popup;
         popup.FormClosed += delegate { popup.Dispose(); if (hoverPopup == popup) hoverPopup = null; };
-        DesktopPet.PlaceBeside(popup, pet.Bounds); popup.Show();
+        DesktopPet.PlaceBeside(popup, pet.BubbleAnchor); popup.Show();
     }
     public void SetHoverComponentVisible(string key, bool visible)
     {
@@ -863,7 +868,7 @@ public sealed class Widget : Form
             }, ContextMenuStrip, delegate(double yaw, double pitch)
             {
                 settings.PetYaw = yaw; settings.PetPitch = pitch;
-                try { Storage.Save(settings); } catch (Exception ex) { MessageBox.Show(this, ex.Message, "视角未保存"); }
+                try { Storage.Save(settings); } catch (Exception ex) { MessageBox.Show(this, ex.Message, "朝向未保存"); }
             }, ShowHoverInfo);
         pet.ApplySettings(settings); if (!pet.Visible) pet.Show();
     }
@@ -1143,26 +1148,13 @@ public static class Program
                 using (Bitmap image = new Bitmap(preview.Width, preview.Height)) { preview.DrawToBitmap(image, preview.ClientRectangle); ApplyWindowRegion(preview, image); image.Save(Path.Combine(AppDomain.CurrentDomain.BaseDirectory, privacy == 0 ? "monthly-preview.png" : "monthly-private-preview.png")); }
                 preview.Hide();
             }
-            using (Bitmap bread = new Bitmap(1000, 524))
-            using (Graphics g = Graphics.FromImage(bread))
-            {
-                g.Clear(Color.FromArgb(246, 247, 252));
-                string[] labels = { "面包猫 · 正面", "面包猫 · 举臂", "面包猫 · 侧面", "面包猫 · 背面", "睡觉", "摸鱼", "工作", "被拎起" };
-                double[] angles = { 0, 25, 90, 180 };
-                for (int i = 0; i < labels.Length; i++)
-                {
-                    using (Bitmap image = PetModel3D.Render(5, 0, 18, i < 4 || i == 7 ? 0 : i - 3, i < 4 ? angles[i] : 25, 12, false, false, i == 7, 250)) g.DrawImage(image, i % 4 * 250, i / 4 * 262);
-                    Widget.Write(g, labels[i], 10, Color.FromArgb(64, 69, 88), new RectangleF(i % 4 * 250, i / 4 * 262 + 237, 250, 25), FontStyle.Regular, StringAlignment.Center);
-                }
-                bread.Save(Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "bread-cat-preview.png"));
-            }
             using (Bitmap expressions = new Bitmap(PetArt.Names.Length * 200, 430))
             using (Graphics g = Graphics.FromImage(expressions))
             {
                 g.Clear(Color.FromArgb(246, 247, 252));
                 for (int row = 0; row < 2; row++) for (int character = 0; character < PetArt.Names.Length; character++)
                 {
-                    using (Bitmap image = PetModel3D.Render(character, 0, 18, 0, 25, 12, false, false, row == 1)) g.DrawImage(image, character * 200, row * 215);
+                    using (Bitmap image = PetArt.Render(PetArt.Characters[character], 0, 18, 0, 25, false, row == 1)) g.DrawImage(image, character * 200, row * 215);
                     Widget.Write(g, PetArt.Names[character] + (row == 0 ? " · 平时" : " · 拖动惊讶"), 9, Color.FromArgb(64, 69, 88), new RectangleF(character * 200, row * 215 + 190, 200, 25), FontStyle.Regular, StringAlignment.Center);
                 }
                 expressions.Save(Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "drag-preview.png"));
@@ -1180,7 +1172,7 @@ public static class Program
                 string[] edges = { "左边", "右边", "上边", "下边", "悬停展开" };
                 for (int row = 0; row < 5; row++) for (int character = 0; character < PetArt.Names.Length; character++)
                 {
-                    using (Bitmap image = PetModel3D.RenderDocked(character, 0, 18, row < 4 ? row + 1 : 4, row == 4 ? 1 : 0)) g.DrawImage(image, character * 200, row * 215);
+                    using (Bitmap image = PetArt.RenderDocked(PetArt.Characters[character], 0, 18, row < 4 ? row + 1 : 4, row == 4 ? 1 : 0)) g.DrawImage(image, character * 200, row * 215);
                     Widget.Write(g, PetArt.Names[character] + " · " + edges[row], 9, Color.FromArgb(64, 69, 88), new RectangleF(character * 200, row * 215 + 190, 200, 25), FontStyle.Regular, StringAlignment.Center);
                 }
                 docks.Save(Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "dock-preview.png"));
@@ -1197,21 +1189,10 @@ public static class Program
                 g.Clear(Color.FromArgb(246, 247, 252));
                 for (int pose = 0; pose < 4; pose++) for (int character = 0; character < PetArt.Names.Length; character++)
                 {
-                    using (Bitmap image = PetModel3D.Render(character, 0, 18, pose, 25, 12, false, false)) g.DrawImage(image, character * 200, pose * 215);
-                    Widget.Write(g, PetArt.Names[character] + " · " + PetModel3D.PoseNames[pose], 9, Color.FromArgb(64, 69, 88), new RectangleF(character * 200, pose * 215 + 187, 200, 25), FontStyle.Bold, StringAlignment.Center);
+                    using (Bitmap image = PetArt.Render(PetArt.Characters[character], 0, 18, pose, 25, false)) g.DrawImage(image, character * 200, pose * 215);
+                    Widget.Write(g, PetArt.Names[character] + " · " + PetArt.PoseNames[pose], 9, Color.FromArgb(64, 69, 88), new RectangleF(character * 200, pose * 215 + 187, 200, 25), FontStyle.Bold, StringAlignment.Center);
                 }
-                poses.Save(Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "poses-3d-preview.png"));
-            }
-            using (Bitmap views = new Bitmap(1000, 220))
-            using (Graphics g = Graphics.FromImage(views))
-            {
-                g.Clear(Color.FromArgb(246, 247, 252)); double[] angles = { 0, 45, 90, 180, 270 };
-                for (int index = 0; index < angles.Length; index++)
-                {
-                    using (Bitmap image = PetModel3D.Render(4, 0, 18, 0, angles[index], 12, false, false)) g.DrawImage(image, index * 200, 0);
-                    Widget.Write(g, angles[index] + "°", 9, Color.FromArgb(64, 69, 88), new RectangleF(index * 200, 187, 200, 25), FontStyle.Bold, StringAlignment.Center);
-                }
-                views.Save(Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "views-3d-preview.png"));
+                poses.Save(Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "poses-2d-preview.png"));
             }
             using (Bitmap sheet = new Bitmap(PetArt.Names.Length * 200, 460))
             using (Graphics g = Graphics.FromImage(sheet))
@@ -1219,7 +1200,7 @@ public static class Program
                 g.Clear(Color.FromArgb(246, 247, 252));
                 for (int theme = 0; theme < 2; theme++) for (int character = 0; character < PetArt.Names.Length; character++)
                 {
-                    using (Bitmap pet = PetArt.Render(character, theme, 16, false, false))
+                    using (Bitmap pet = PetArt.Render(PetArt.Characters[character], theme, 16, 0, 25, false))
                     {
                         pet.Save(Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "pet-" + character + "-" + theme + ".png"));
                         g.DrawImage(pet, character * 200, theme * 230);
@@ -1436,7 +1417,7 @@ public static class Tests
             using (StringReader legacy = new StringReader("<Settings><MonthlySalary>8800</MonthlySalary></Settings>"))
             {
                 Settings old = (Settings)new XmlSerializer(typeof(Settings)).Deserialize(legacy); old.Validate();
-                check(old.PetEnabled && old.PetCharacter == 0 && old.DetailOrder.Split(',').Length == DetailCard.Keys.Length, "Legacy configuration enables default pet and all detail components");
+                check(old.PetEnabled && old.PetCharacter == PetArt.Beagle && old.DetailOrder.Split(',').Length == DetailCard.Keys.Length, "Legacy configuration enables default pet and all detail components");
             }
             Settings petSettings = new Settings { PetCharacter = 3, PetX = 100, PetY = 200, PetWalk = true, DailySummaryEnabled = false };
             Storage.Save(petSettings);
@@ -1483,7 +1464,7 @@ public static class Tests
                 check(!previewRemains, "Reminder notifications take priority over hover preview");
             }
             petSettings.PetYaw = 145; petSettings.PetPitch = 35; petSettings.PetPose = 3; Storage.Save(petSettings);
-            check(Storage.Load().PetYaw == 145 && Storage.Load().PetPitch == 35 && Storage.Load().PetPose == 3, "Three-dimensional camera and manual pose persist");
+            check(Storage.Load().PetYaw == 145 && Storage.Load().PetPitch == 35 && Storage.Load().PetPose == 3, "Saved direction and manual pose persist");
             DateTime behaviorTime = new DateTime(2026, 11, 2, 10, 0, 0);
             PetBehavior behavior = new PetBehavior(behaviorTime, 17); HashSet<int> seenPoses = new HashSet<int>();
             check((behavior.NextChange - behaviorTime).TotalSeconds >= 10 && (behavior.NextChange - behaviorTime).TotalSeconds <= 20, "Automatic pose initially waits ten to twenty seconds");
@@ -1501,27 +1482,24 @@ public static class Tests
             check(behavior.Update(-1, pausedAt, true) == pausedPose, "Speaking or interaction holds the current pose");
             check(behavior.Update(1, pausedAt, false) == 1 && behavior.Update(1, pausedAt.AddMinutes(5), false) == 1, "Manual sleeping pose stays selected");
             check(behavior.Update(-1, pausedAt.AddMinutes(6), false) == 1, "Returning to automatic mode starts a new waiting interval");
-            using (Bitmap front = PetModel3D.Render(4, 0, 10, 0, 0, 12, false, false))
-            using (Bitmap back = PetModel3D.Render(4, 0, 10, 0, 180, 12, false, false))
+            using (Bitmap front = PetArt.Render(PetArt.Beagle, 0, 10, 0, 25, false))
+            using (Bitmap back = PetArt.Render(PetArt.Beagle, 0, 10, 0, 205, false))
             {
                 int differences = 0;
                 for (int y = 0; y < front.Height; y += 2) for (int x = 0; x < front.Width; x += 2) if (front.GetPixel(x, y) != back.GetPixel(x, y)) differences++;
-                check(differences > 400, "Camera rotation reveals a different three-dimensional back view");
+                check(differences > 400, "Right drag mirrors the flat beagle artwork");
             }
-            for (int pose = 0; pose < 4; pose++)
-            using (Bitmap view = PetModel3D.Render(0, 0, 10, pose, 35, 20, false, false))
+            foreach (int kind in PetArt.Characters) for (int pose = 0; pose < 4; pose++)
+            using (Bitmap view = PetArt.Render(kind, 0, 10, pose, 25, false))
             {
                 int count = 0; for (int y = 0; y < view.Height; y += 3) for (int x = 0; x < view.Width; x += 3) if (view.GetPixel(x, y).A > 100) count++;
-                check(count > 150 && view.GetPixel(0, 0).A == 0, "Three-dimensional pose renders a visible model on transparent background: " + pose);
+                check(count > 150 && view.GetPixel(0, 0).A == 0, "2D pose renders on transparent background: " + kind + "/" + pose);
             }
             System.Diagnostics.Stopwatch renderWatch = System.Diagnostics.Stopwatch.StartNew();
-            for (int i = 0; i < 20; i++) using (Bitmap rendered = PetModel3D.Render(0, 0, i, 0, 25, 12, false, false)) { }
-            report.AppendLine("Render benchmark: " + (renderWatch.Elapsed.TotalMilliseconds / 20).ToString("F1", CultureInfo.InvariantCulture) + " ms/frame (warm renderer)");
-            renderWatch.Restart();
-            for (int i = 0; i < 20; i++) using (Bitmap rendered = PetModel3D.Render(0, 0, i + 48, 0, 25, 12, false, false)) { }
-            report.AppendLine("Cached animation benchmark: " + (renderWatch.Elapsed.TotalMilliseconds / 20).ToString("F2", CultureInfo.InvariantCulture) + " ms/frame");
+            for (int i = 0; i < 20; i++) using (Bitmap rendered = PetArt.Render(PetArt.Beagle, 0, i, 0, 25, false)) { }
+            report.AppendLine("Render benchmark: " + (renderWatch.Elapsed.TotalMilliseconds / 20).ToString("F1", CultureInfo.InvariantCulture) + " ms/frame (2D artwork)");
             for (int character = 0; character < PetArt.Names.Length; character++)
-            using (Bitmap petImage = PetArt.Render(character, 0, 10, false, false))
+            using (Bitmap petImage = PetArt.Render(PetArt.Characters[character], 0, 10, 0, 25, false))
             {
                 check(petImage.GetPixel(0, 0).A == 0 && petImage.GetPixel(100, 100).A > 0, "Pet silhouette has transparent surroundings and opaque body: " + character);
             }
@@ -1532,7 +1510,7 @@ public static class Tests
                 IntPtr focused = GetForegroundWindow(); desktop.Show(); Application.DoEvents();
                 check(desktop.Visible && desktop.IsHandleCreated, "Native alpha-composited pet window renders successfully");
                 check(GetForegroundWindow() == focused || GetForegroundWindow() != desktop.Handle, "Showing desktop pet does not steal keyboard focus");
-                for (int character = 0; character < PetArt.Names.Length; character++) { petSettings.PetCharacter = character; desktop.ApplySettings(petSettings); }
+                for (int character = 0; character < PetArt.Names.Length; character++) { petSettings.PetCharacter = PetArt.Characters[character]; desktop.ApplySettings(petSettings); }
                 check(desktop.Visible && desktop.ClientSize == new Size(200, 190), "All characters switch in the same small native window");
                 using (ReminderPopup bubble = new ReminderPopup("喝水时间到了", 0, false, "猫咪"))
                 {
@@ -1557,18 +1535,18 @@ public static class Tests
             check(DesktopPet.FindDockEdge(new Rectangle(-900, 100, 200, 190), dockArea) == 0, "Interior positions do not trigger docking");
             Settings dockSettings = petSettings.Copy(); dockSettings.PetDockEdge = 4; Storage.Save(dockSettings);
             check(Storage.Load().PetDockEdge == 4 && Storage.Load().PetPose == petSettings.PetPose && Storage.Load().HoverVisible == petSettings.HoverVisible, "Dock edge persists independently of pose and hover configuration");
-            for (int character = 0; character < PetArt.Names.Length; character++)
-            using (Bitmap tucked = PetModel3D.RenderDocked(character, 0, 10, 4, 0))
-            using (Bitmap expanded = PetModel3D.RenderDocked(character, 0, 10, 4, 1))
+            for (int character = 0; character < PetArt.Names.Length; character++) for (int edge = 1; edge <= 4; edge++)
+            using (Bitmap tucked = PetArt.RenderDocked(PetArt.Characters[character], 0, 10, edge, 0))
+            using (Bitmap expanded = PetArt.RenderDocked(PetArt.Characters[character], 0, 10, edge, 1))
             {
                 int small = 0, full = 0;
                 for (int y = 0; y < 190; y++) for (int x = 0; x < 200; x++) { if (tucked.GetPixel(x, y).A > 30) small++; if (expanded.GetPixel(x, y).A > 30) full++; }
-                check(small > 250 && small < full / 2 && tucked.GetPixel(100, 30).A == 0, "Docking shows a visible partial head; expanding reveals the whole character: " + character);
+                check(small > 250 && small < full / 2, "Docking shows a compact portrait before revealing the full character: " + character + "/" + edge);
             }
             invalid = s.Copy(); invalid.DetailOrder = "income,income,progress,countdown,encouragement"; rejected = false;
             try { invalid.Validate(); } catch { rejected = true; } check(rejected, "Duplicate component order is rejected");
             invalid = s.Copy(); invalid.PetPose = 4; rejected = false;
-            try { invalid.Validate(); } catch { rejected = true; } check(rejected, "Unknown three-dimensional pose rejected");
+            try { invalid.Validate(); } catch { rejected = true; } check(rejected, "Unknown desktop pet pose rejected");
             invalid = s.Copy(); invalid.PetYaw = double.NaN; rejected = false;
             try { invalid.Validate(); } catch { rejected = true; } check(rejected, "Invalid camera value rejected");
             Settings remind = new Settings { RemindersEnabled = true };
@@ -1719,9 +1697,9 @@ public static class Tests
                 desktop.Hide();
             }
             for (int character = 0; character < PetArt.Names.Length; character++)
-            using (Bitmap normal = PetModel3D.Render(character, 0, 18, 0, 25, 12, false, false))
-            using (Bitmap surprised = PetModel3D.Render(character, 0, 18, 0, 25, 12, false, false, true))
-            using (Bitmap restored = PetModel3D.Render(character, 0, 18, 0, 25, 12, false, false))
+            using (Bitmap normal = PetArt.Render(PetArt.Characters[character], 0, 18, 0, 25, false))
+            using (Bitmap surprised = PetArt.Render(PetArt.Characters[character], 0, 18, 0, 25, false, true))
+            using (Bitmap restored = PetArt.Render(PetArt.Characters[character], 0, 18, 0, 25, false))
             {
                 int changed = 0, changedBack = 0;
                 for (int y = 0; y < 190; y++) for (int x = 0; x < 200; x++) { if (normal.GetPixel(x, y) != surprised.GetPixel(x, y)) changed++; if (normal.GetPixel(x, y) != restored.GetPixel(x, y)) changedBack++; }
@@ -1758,45 +1736,50 @@ public static class Tests
             for (int tick = 1; tick <= 3; tick++) sparse.Update(true, pickupTime.AddMilliseconds(tick * 40), 0);
             check(Math.Abs(frequent.Amount - sparse.Amount) < .001, "Animation transition is independent of mouse message frequency");
             for (int character = 0; character < PetArt.Names.Length; character++)
-            using (Bitmap first = PetModel3D.Render(character, 0, 0, 0, 25, 12, false, false, true))
-            using (Bitmap next = PetModel3D.Render(character, 0, 6, 0, 25, 12, false, false, true))
+            using (Bitmap first = PetArt.Render(PetArt.Characters[character], 0, 0, 0, 25, false, true))
+            using (Bitmap next = PetArt.Render(PetArt.Characters[character], 0, 6, 0, 25, false, true))
             {
                 int changedFeet = 0;
                 for (int y = 120; y < 190; y++) for (int x = 0; x < 200; x++) if (first.GetPixel(x, y) != next.GetPixel(x, y)) changedFeet++;
                 check(changedFeet > 80, "Held animation moves feet and body rather than only a fixed face: " + character);
             }
-            using (Bitmap sitting = PetModel3D.Render(3, 0, 6, 0, 25, 12, false, false, true))
-            using (Bitmap working = PetModel3D.Render(3, 0, 6, 3, 25, 12, false, false, true))
+            using (Bitmap sitting = PetArt.Render(PetArt.Robot, 0, 6, 0, 25, false, true))
+            using (Bitmap working = PetArt.Render(PetArt.Robot, 0, 6, 3, 25, false, true))
             {
                 bool same = true;
                 for (int y = 0; y < 190; y++) for (int x = 0; x < 200; x++) if (sitting.GetPixel(x, y) != working.GetPixel(x, y)) same = false;
                 check(same, "Temporary picked-up pose has no floating work desk and does not depend on saved activity");
             }
-            check(PetArt.Names.Length == 8 && PetArt.Names[4] == "招财猫" && PetArt.Names[5] == "面包猫" && PetArt.Names[6] == "比格狗" && PetArt.Names[7] == "抹茶旦旦", "New pets append to the roster without changing saved character IDs");
-            Settings breadConfig = new Settings { MonthlySalary = 8800, PetCharacter = 5, PetEnabled = false, DailySummaryEnabled = false, PrivacyMode = true };
-            Storage.Save(breadConfig);
-            using (SettingsForm dialog = new SettingsForm(breadConfig))
+            check(PetArt.Names.Length == 4 && PetArt.Characters[0] == 6 && PetArt.Characters[1] == 7 && PetArt.Characters[2] == 4 && PetArt.Characters[3] == 3, "Only four pets are selectable and their saved IDs remain valid");
+            foreach (int retired in new[] { 0, 1, 2, 5 })
+            {
+                Settings legacyPet = new Settings { MonthlySalary = 8700, PetCharacter = retired, PetDockEdge = 3, PrivacyMode = true };
+                legacyPet.Validate();
+                check(legacyPet.PetCharacter == PetArt.Beagle && legacyPet.PetDockEdge == 3 && legacyPet.PrivacyMode && legacyPet.MonthlySalary == 8700,
+                    "A removed pet falls back to beagle without changing the rest of the settings: " + retired);
+            }
+            Settings picker = new Settings { MonthlySalary = 8800, PetCharacter = PetArt.Lucky, PetEnabled = false, DailySummaryEnabled = false, PrivacyMode = true };
+            Storage.Save(picker);
+            using (SettingsForm dialog = new SettingsForm(picker))
             {
                 dialog.Opacity = 0; dialog.Show(); Application.DoEvents();
                 ComboBox choices = (ComboBox)dialog.Controls["PetCharacter"];
-                check(choices.Items.Count == 8 && choices.SelectedIndex == 5 && choices.Text == "面包猫", "Bread cat appears and remains selected in the real settings form");
+                check(choices.Items.Count == 4 && choices.SelectedIndex == 2 && choices.Text == "招财猫", "The settings picker maps each choice to its saved ID");
+                choices.SelectedIndex = 3;
                 ((Button)dialog.AcceptButton).PerformClick();
-                check(Storage.Load().PetCharacter == 5 && Storage.Load().PrivacyMode && Storage.Load().MonthlySalary == 8800, "Saving bread cat preserves salary and privacy preferences");
+                check(Storage.Load().PetCharacter == PetArt.Robot && Storage.Load().PrivacyMode && Storage.Load().MonthlySalary == 8800, "Saving the robot choice preserves salary and privacy preferences");
             }
-            using (Widget owner = new Widget(breadConfig))
+            using (Widget owner = new Widget(picker))
             {
                 owner.Opacity = 0; owner.Show(); Application.DoEvents(); ToolStripMenuItem characters = null;
                 foreach (ToolStripItem item in owner.ContextMenuStrip.Items) if (item.Text == "切换桌宠形象") characters = item as ToolStripMenuItem;
-                check(characters != null && characters.DropDownItems.Count == 8 && characters.DropDownItems[5].Text == "面包猫", "Bread cat is available from the existing character menu");
-                foreach (int choice in new[] { 6, 7, 5 }) { characters.DropDownItems[choice].PerformClick(); Application.DoEvents(); check(Storage.Load().PetCharacter == choice, "The shape menu persists selected character " + choice); }
-                check(Storage.Load().PetCharacter == 5 && Storage.Load().PetEnabled, "Selecting bread cat from the menu enables the new pet through the original flow"); owner.Hide();
-            }
-            using (Bitmap front = PetModel3D.Render(5, 0, 18, 0, 0, 12, false, false))
-            using (Bitmap back = PetModel3D.Render(5, 0, 18, 0, 180, 12, false, false))
-            {
-                int difference = 0;
-                for (int y = 0; y < 190; y++) for (int x = 0; x < 200; x++) if (front.GetPixel(x, y) != back.GetPixel(x, y)) difference++;
-                check(difference > 1000, "Bread cat rotates as a real model with a distinct front and back");
+                check(characters != null && characters.DropDownItems.Count == 4, "The pet menu shows only the active roster");
+                for (int i = 0; i < PetArt.Characters.Length; i++)
+                {
+                    characters.DropDownItems[i].PerformClick(); Application.DoEvents();
+                    check(Storage.Load().PetCharacter == PetArt.Characters[i] && Storage.Load().PetEnabled, "Selecting a 2D pet persists its ID and enables the pet: " + i);
+                }
+                owner.Hide();
             }
             Settings monthly = new Settings { MonthlySalary = 8800, ManualDays = true, Days = 22, ManualMonth = "2026-11", DailySummaryEnabled = false, PetEnabled = false };
             check(WorkClock.At(monthly, new DateTime(2026, 11, 1, 18, 0, 0)).MonthEarned == 0 && WorkClock.At(monthly, new DateTime(2026, 11, 2, 8, 0, 0)).MonthEarned == 0, "Month starts at zero, including a resting first day");
