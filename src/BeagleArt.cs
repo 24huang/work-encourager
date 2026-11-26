@@ -11,7 +11,9 @@ internal static partial class StickerArt
     private static readonly Color Cream = Color.FromArgb(255, 250, 237);
     private static readonly Color Black = Color.FromArgb(30, 31, 29);
 
-    private static Bitmap RenderBeagle(int theme, int phase, int pose, double yaw, bool walking, int width, double lean)
+    private enum BeagleBody { Standing, Sitting, Lounging, Curled, Peeking, Lifted }
+
+    private static Bitmap RenderBeagle(int theme, int frame, int pose, double yaw, bool walking, int width, double lean)
     {
         Bitmap result = new Bitmap(width, Math.Max(1, (int)Math.Round(width * .95)), PixelFormat.Format32bppPArgb);
         using (Graphics g = Graphics.FromImage(result))
@@ -26,12 +28,15 @@ internal static partial class StickerArt
             }
 
             Color accent = theme == 0 ? Color.FromArgb(162, 202, 220) : Color.FromArgb(231, 172, 199);
-            double t = phase * Math.PI * 2 / 48;
+            double t = (frame % 48) * Math.PI * 2 / 48;
+            // 每轮48帧继续播放局部动作，下一轮在三种闲置姿势之间换挡。
+            BeagleBody body = pose == 0 ? (walking ? BeagleBody.Standing : (BeagleBody)(frame / 48 % 3))
+                : pose == 1 ? BeagleBody.Curled : pose == 2 ? BeagleBody.Sitting : pose == 3 ? BeagleBody.Standing
+                : pose == 4 ? BeagleBody.Peeking : BeagleBody.Lifted;
             GraphicsState state = g.Save();
             if (pose == 1)
             {
-                Ellipse(g, accent, 14, 95, 111, 21);
-                g.TranslateTransform(0, 7);
+                Ellipse(g, accent, 17, 101, 105, 20);
             }
             else if (pose == 4) g.TranslateTransform(0, -13);
             else if (pose == 5)
@@ -40,21 +45,20 @@ internal static partial class StickerArt
                 g.RotateTransform((float)(lean + Math.Sin(t * 3) * 7));
                 g.TranslateTransform(-72, -66 - (float)(Math.Sin(t * 4) * 3));
             }
-            else if (pose != 0) g.TranslateTransform(0, (float)(Math.Sin(t * 2) * (walking ? 1.7 : .9)));
+            else if (body == BeagleBody.Standing) g.TranslateTransform(0, (float)(Math.Sin(t * 2) * (walking ? 1.6 : .7)));
 
-            DrawDog(g, pose, t);
+            DrawDog(g, body, pose, t, walking);
             g.Restore(state);
 
-            if (pose == 0) DrawBowl(g);
+            if (body == BeagleBody.Lounging) DrawBowl(g);
             else if (pose == 1)
             {
-                Shape(g, Color.Empty, 115, 31, 117, 30, 120, 30, 123, 30, 121, 33, 118, 35, 116, 38, 119, 38, 122, 38, 125, 37);
-                Shape(g, Color.Empty, 121, 22, 123, 21, 126, 21, 128, 21, 127, 23, 125, 25, 123, 27, 125, 27, 127, 27, 130, 26);
+                DrawSleepMark(g, accent);
             }
             else if (pose == 2)
             {
                 GraphicsState phone = g.Save();
-                g.TranslateTransform(92, 99);
+                g.TranslateTransform(80, 101);
                 g.RotateTransform(-19 + (float)Math.Sin(t * 3) * 2);
                 Shape(g, Ink, -9, -11, -9, -14, -6, -15, -4, -15, 0, -15, 4, -15, 7, -15, 10, -15, 11, -13, 11, -10, 11, -3, 11, 4, 11, 11, 11, 14, 9, 15, 6, 15, 1, 15, -3, 15, -6, 15, -9, 15, -9, 13, -9, 10, -9, 4, -9, -4, -9, -11);
                 using (SolidBrush glass = new SolidBrush(accent)) g.FillRectangle(glass, -6, -11, 14, 21);
@@ -65,14 +69,16 @@ internal static partial class StickerArt
                 Shape(g, Color.FromArgb(167, 135, 104), 42, 105, 65, 103, 94, 104, 120, 105, 125, 106, 125, 110, 122, 112, 99, 114, 62, 114, 42, 112, 38, 110, 38, 107, 42, 105);
                 Shape(g, accent, 66, 102, 69, 94, 73, 84, 76, 78, 77, 76, 80, 75, 83, 75, 94, 75, 107, 76, 117, 77, 121, 78, 122, 81, 120, 84, 117, 92, 114, 100, 112, 105, 99, 108, 80, 108, 66, 106, 64, 105, 64, 104, 66, 102);
                 Ellipse(g, Cream, 93, 88, 6, 5, false);
+                Ellipse(g, Cream, 64, 97, 13, 10);
+                Ellipse(g, Cream, 109, 96, 10, 10);
             }
         }
         return result;
     }
 
-    private static void DrawDog(Graphics g, int pose, double t)
+    private static void DrawDog(Graphics g, BeagleBody body, int pose, double t, bool walking)
     {
-        if (pose != 4)
+        if (body == BeagleBody.Lounging)
         {
             GraphicsState tail = g.Save();
             g.TranslateTransform(38, 70);
@@ -80,18 +86,29 @@ internal static partial class StickerArt
             g.TranslateTransform(-38, -70);
             Shape(g, Fur, 38, 75, 26, 75, 23, 67, 22, 57, 22, 53, 22, 51, 24, 51, 27, 53, 25, 61, 31, 64, 33, 65, 37, 65, 43, 65, 43, 70, 41, 73, 38, 75);
             g.Restore(tail);
+            Shape(g, Cream, 15, 91, 14, 92, 17, 86, 23, 84, 26, 81, 27, 77, 31, 74, 37, 69, 48, 69, 59, 70, 67, 73, 72, 78, 75, 85, 83, 86, 88, 91, 85, 96, 80, 104, 63, 105, 51, 104, 44, 102, 39, 100, 35, 101, 29, 105, 19, 104, 17, 102, 16, 100, 17, 97, 21, 95, 18, 95, 15, 94, 15, 91);
+            Shape(g, Ear, 29, 80, 34, 72, 41, 70, 51, 70, 56, 71, 61, 73, 64, 77, 58, 81, 51, 82, 46, 85, 43, 83, 36, 79, 29, 80);
+            Shape(g, Color.Empty, 30, 91, 31, 88, 31, 84, 30, 82);
+            Shape(g, Color.Empty, 21, 94, 25, 94, 28, 93, 29, 91);
+            Shape(g, Color.Empty, 45, 88, 45, 93, 50, 100, 56, 101);
         }
-        if (pose != 4)
-        {
-        Shape(g, Cream, 15, 91, 14, 92, 17, 86, 23, 84, 26, 81, 27, 77, 31, 74, 37, 69, 48, 69, 59, 70, 67, 73, 72, 78, 75, 85, 83, 86, 88, 91, 85, 96, 80, 104, 63, 105, 51, 104, 44, 102, 39, 100, 35, 101, 29, 105, 19, 104, 17, 102, 16, 100, 17, 97, 21, 95, 18, 95, 15, 94, 15, 91);
-        Shape(g, Ear, 29, 80, 34, 72, 41, 70, 51, 70, 56, 71, 61, 73, 64, 77, 58, 81, 51, 82, 46, 85, 43, 83, 36, 79, 29, 80);
-        Shape(g, Color.Empty, 30, 91, 31, 88, 31, 84, 30, 82);
-        Shape(g, Color.Empty, 21, 94, 25, 94, 28, 93, 29, 91);
-        Shape(g, Color.Empty, 45, 88, 45, 93, 50, 100, 56, 101);
-
-        }
+        else if (body != BeagleBody.Peeking) DrawBeagleBody(g, body, t, walking);
 
         GraphicsState head = g.Save();
+        if (body == BeagleBody.Standing) g.TranslateTransform(-8, -13);
+        else if (body == BeagleBody.Sitting)
+        {
+            g.TranslateTransform(70, 68);
+            g.RotateTransform((float)(-9 + Math.Sin(t) * 3));
+            g.TranslateTransform(-76, -77);
+        }
+        else if (body == BeagleBody.Curled)
+        {
+            g.TranslateTransform(80, 77);
+            g.RotateTransform(-14);
+            g.ScaleTransform(.82f, .82f);
+            g.TranslateTransform(-76, -65);
+        }
         if (pose == 5)
         {
             g.TranslateTransform(72, 68);
@@ -107,6 +124,7 @@ internal static partial class StickerArt
         Ellipse(g, Black, 58, 79, 11, 7, false);
         Ellipse(g, Color.FromArgb(221, 206, 187), 60, 80, 3.4f, 1.25f, false);
         if (pose == 5) Ellipse(g, Black, 70, 89, 6, 7, false);
+        else if (body == BeagleBody.Sitting && pose == 0) Shape(g, Color.Empty, 66, 85, 69, 88, 74, 88, 77, 85);
         g.Restore(head);
 
         if (pose == 4)
@@ -117,7 +135,55 @@ internal static partial class StickerArt
             g.TranslateTransform(-2, -5);
             return;
         }
-        Shape(g, Cream, 84, 99, 83, 97, 84, 94, 89, 92, 90, 88, 94, 86, 97, 88, 100, 89, 102, 93, 101, 97, 100, 101, 96, 105, 91, 105, 87, 105, 85, 103, 84, 99);
+        if (body == BeagleBody.Lounging) Shape(g, Cream, 84, 99, 83, 97, 84, 94, 89, 92, 90, 88, 94, 86, 97, 88, 100, 89, 102, 93, 101, 97, 100, 101, 96, 105, 91, 105, 87, 105, 85, 103, 84, 99);
+    }
+
+    private static void DrawBeagleBody(Graphics g, BeagleBody body, double t, bool walking)
+    {
+        if (body == BeagleBody.Curled)
+        {
+            // 蜷睡时四肢收起，和守食盆的趴姿使用不同的身体轮廓。
+            Ellipse(g, Cream, 25, 74, 68, 42);
+            Shape(g, Ear, 29, 92, 27, 83, 34, 75, 46, 75, 53, 76, 59, 79, 60, 85, 53, 86, 44, 87, 39, 94, 35, 95, 31, 94, 29, 92);
+            Shape(g, Fur, 44, 109, 33, 106, 30, 100, 35, 97, 40, 96, 41, 105, 52, 104, 59, 103, 65, 101, 66, 105, 65, 110, 53, 113, 44, 109);
+            Ellipse(g, Cream, 65, 104, 22, 11);
+            return;
+        }
+
+        if (body != BeagleBody.Lifted)
+        {
+            GraphicsState tail = g.Save();
+            g.TranslateTransform(50, 95);
+            g.RotateTransform((float)Math.Sin(t * (walking ? 5 : 3)) * (body == BeagleBody.Standing ? 19 : 7));
+            g.TranslateTransform(-50, -95);
+            Shape(g, Fur, 53, 98, 39, 99, 30, 92, 29, 79, 29, 75, 32, 72, 34, 77, 35, 87, 42, 89, 54, 89, 58, 91, 57, 96, 53, 98);
+            g.Restore(tail);
+        }
+        if (body == BeagleBody.Sitting)
+        {
+            Ellipse(g, Cream, 47, 73, 47, 44);
+            Shape(g, Fur, 47, 99, 46, 90, 52, 88, 57, 91, 61, 94, 60, 101, 62, 106, 58, 109, 50, 107, 47, 99);
+            Ellipse(g, Cream, 44, 106, 21, 12);
+            Ellipse(g, Cream, 77, 106, 20, 12);
+            Ellipse(g, Cream, 66, 94, 15, 16);
+            return;
+        }
+
+        float stride = (float)Math.Sin(t * (walking ? 6 : 4)) * (body == BeagleBody.Lifted ? 6 : walking ? 4 : 0);
+        // 四足分前后两层，跑动和被拎起时交替摆动。
+        Ellipse(g, Color.FromArgb(231, 216, 192), 47 - stride, 93, 14, 23);
+        Ellipse(g, Color.FromArgb(231, 216, 192), 75 + stride, 95, 14, 23);
+        Shape(g, Cream, 38, 91, 41, 80, 56, 77, 67, 78, 79, 78, 90, 82, 91, 91, 95, 101, 86, 107, 76, 108, 63, 109, 48, 107, 42, 101, 38, 98, 37, 94, 38, 91);
+        Shape(g, Ear, 40, 96, 39, 88, 52, 82, 60, 83, 62, 92, 58, 99, 51, 101, 46, 101, 42, 99, 40, 96);
+        for (int foot = 0; foot < 2; foot++)
+        {
+            GraphicsState leg = g.Save();
+            g.TranslateTransform(foot == 0 ? 43 + stride : 79 - stride, 0);
+            if (body == BeagleBody.Lifted) Ellipse(g, Cream, -2, 96, 15, 22);
+            else Shape(g, Cream, 0, 94, 4, 94, 8, 95, 10, 98, 11, 102, 10, 108, 12, 111,
+                16, 115, 13, 119, 7, 119, 0, 119, -3, 116, -2, 112, -1, 105, -2, 99, 0, 94);
+            g.Restore(leg);
+        }
     }
 
     private static void DrawEyes(Graphics g, int pose)

@@ -11,16 +11,16 @@ internal static partial class StickerArt
     private static readonly Color Mint = Color.FromArgb(207, 229, 144);
     private static readonly Color Blush = Color.FromArgb(240, 155, 145);
 
-    public static Bitmap Render(int kind, int theme, int phase, int pose, double facing, bool walking, int width, double lean)
+    public static Bitmap Render(int kind, int theme, int frame, int pose, double facing, bool walking, int width, double lean)
     {
-        if (kind == PetArt.Beagle) return RenderBeagle(theme, phase, pose, facing, walking, width, lean);
+        if (kind == PetArt.Beagle) return RenderBeagle(theme, frame, pose, facing, walking, width, lean);
         Bitmap result = new Bitmap(width, Math.Max(1, (int)Math.Round(width * .95)), PixelFormat.Format32bppPArgb);
         using (Graphics g = Graphics.FromImage(result))
         {
             g.SmoothingMode = SmoothingMode.AntiAlias;
             g.ScaleTransform(width / 142f, result.Height / 135f);
             Color accent = theme == 0 ? Color.FromArgb(131, 198, 221) : Color.FromArgb(228, 156, 196);
-            double t = phase * Math.PI * 2 / 48;
+            double t = (frame % 48) * Math.PI * 2 / 48;
             if (pose == 1) Ellipse(g, Color.FromArgb(90, accent), 16, 100, 110, 22, false);
             else if (pose != 4 && pose != 5) Ellipse(g, Color.FromArgb(25, 22, 35, 44), 29, 112, 83, 13, false);
 

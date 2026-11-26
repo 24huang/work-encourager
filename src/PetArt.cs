@@ -19,13 +19,13 @@ public static class PetArt
 
     public static string PoseName(int kind, int pose)
     {
-        return kind == Beagle && pose == 0 ? "闲置趴着" : PoseNames[pose];
+        return kind == Beagle && pose == 0 ? "闲置动作" : PoseNames[pose];
     }
 
     public static Bitmap Render(int kind, int theme, int frame, int pose, double facing, bool walking, bool surprised = false, int width = 200, double lean = 0)
     {
         width = Math.Max(1, width);
-        return StickerArt.Render(kind, theme, frame % 48, surprised ? 5 : pose, facing, walking, width, lean);
+        return StickerArt.Render(kind, theme, frame, surprised ? 5 : pose, facing, walking, width, lean);
     }
 
     private static RectangleF PeekBox(RectangleF bounds, int edge)
@@ -55,7 +55,7 @@ public static class PetArt
                 bool head = layer == 0;
                 float alpha = head ? 1 - amount : amount;
                 if (alpha <= 0) continue;
-                using (Bitmap art = Render(kind, theme, frame, head ? 4 : 0, facing, false, false, width))
+                using (Bitmap art = Render(kind, theme, frame % 48, head ? 4 : 0, facing, false, false, width))
                 {
                     ColorMatrix fade = new ColorMatrix(); fade.Matrix33 = alpha;
                     opacity.SetColorMatrix(fade);
